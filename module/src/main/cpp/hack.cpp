@@ -35,30 +35,33 @@ static std::string GetLibDir(JavaVM *vm) {
 void hack_start(const char *game_data_dir) {
     if (game_data_dir == nullptr) return;
 
+    // Путь к логу в папке игры
     std::string log_path = std::string(game_data_dir) + "/module_log.txt";
     FILE *log = fopen(log_path.c_str(), "w");
     if (!log) return;
 
-    fprintf(log, "--- Start Memory Map Scan ---\n");
+    fprintf(log, "--- Lost Sword Memory Analysis ---\n");
     fflush(log);
 
-    // Даем системе время на окончательную загрузку (увеличим до 10 для стабильности)
+    // Даем системе время (10 сек), чтобы NCGuard закончил первичную проверку
     std::this_thread::sleep_for(std::chrono::seconds(10));
 
+    uintptr_t base = 0;
     FILE *maps = fopen("/proc/self/maps", "r");
     if (maps) {
         char line[512];
         while (fgets(line, sizeof(line), maps)) {
-            // Пишем в лог библиотеки, связанные с игрой и движком
-            if (strstr(line, ".so") || strstr(line, "alloc")) {
+            // Пишем в лог все библиотеки (.so) — это помогло нам найти libunity
+            if (strstr(line, ".so")) {
                 fprintf(log, "%s", line);
             }
 
-            // Поиск адреса il2cpp. В эмуляторах он может быть в анонимной памяти
-            if ((strstr(line, "libil2cpp") || strstr(line, "unity")) && strstr(line, "r-xp")) {
-                uintptr_t base = 0;
-                if (sscanf(line, "%" SCNxPTR, &base) == 1) {
-                    fprintf(log, ">>> TARGET IDENTIFIED: %" PRIxPTR " <<<\n", base);
+            // Ищем il2cpp или unity как запасной вариант
+            if ((strstr(line, "libil2cpp") || strstr(line, "libunity")) && strstr(line, "r-xp")) {
+                uintptr_t temp_base = 0;
+                if (sscanf(line, "%" SCNxPTR, &temp_base) == 1) {
+                    if (base == 0) base = temp_base; // Берем первый найденный адрес
+                    fprintf(log, ">>> TARGET IDENTIFIED: %" PRIxPTR " <<<\n", temp_base);
                 }
             }
         }
@@ -67,11 +70,22 @@ void hack_start(const char *game_data_dir) {
         fprintf(log, "ERROR: Cannot open /proc/self/maps\n");
     }
 
-    fprintf(log, "--- Scan Finished ---\n");
+    fprintf(log, "--- Scan Finished. Attempting Dump... ---\n");
     fflush(log);
     
-    // Пытаемся запустить дамп
-    il2cpp_dump(game_data_dir);
+    // Пытаемся найти библиотеку через линкер для инициализации API
+    // В Lost Sword она может быть скрыта, пробуем разные имена
+    const char* targets[] = {"libil2cpp.so", "libgame.so", "libmain.so"};
+    for (const char* target : targets) {
+        void *handle = xdl_open(target, XDL_DEFAULT);
+        if (handle) {
+            fprintf(log, "SUCCESS: Found %s\n", target);
+            il2cpp_api_init(handle);
+            il2cpp_dump(game_data_dir);
+            xdl_close(handle);
+            break;
+        }
+    }
     
     fclose(log);
 }
