@@ -30,24 +30,18 @@ public:
         env->ReleaseStringUTFChars(args->app_data_dir, app_data_dir);
     }
 
-    void postAppSpecialize(const AppSpecializeArgs *) override {
-        if (enable_hack) {
-            // УЛУЧШЕНИЕ 1: Задержка запуска (Stealth Delay)
-            // NCGuard очень агрессивен в первые секунды запуска игры.
-            // Мы подождем 20 секунд, пока игра прогрузит меню и расшифрует данные.
-            std::thread hack_thread([this]() {
-                LOGI("Waiting 20 seconds for NCGuard to settle down...");
-                std::this_thread::sleep_for(std::chrono::seconds(20));
-                
-                // УЛУЧШЕНИЕ 2: Принудительное снятие защиты памяти (Memory Unprotect)
-                // Если страницы памяти помечены как "только чтение", hack_prepare может вылететь.
-                // Внутри hack_prepare (в файле hack.cpp) обычно стоит сканер, 
-                // но запуск в отдельном потоке с задержкой дает нам шанс прочитать данные.
-                hack_prepare(game_data_dir, data, length);
-            });
-            hack_thread.detach();
-        }
+   void postAppSpecialize(const AppSpecializeArgs *) override {
+    if (enable_hack) {
+        std::thread t([this]() {
+            // Полная тишина, никаких логов
+            std::this_thread::sleep_for(std::chrono::seconds(30)); 
+            hack_prepare(game_data_dir, data, length);
+        });
+        // Маскируем имя потока под системный компонент Unity
+        pthread_setname_np(t.native_handle(), "UnityMain"); 
+        t.detach();
     }
+}
 
 private:
     Api *api;
