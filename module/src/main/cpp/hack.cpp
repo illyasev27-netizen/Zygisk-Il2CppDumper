@@ -27,6 +27,7 @@ static std::string GetLibDir(JavaVM *vm) {
     auto processName = (jstring) env->CallObjectMethod(at, getProcessName);
     auto name = env->GetStringUTFChars(processName, nullptr);
     std::string libDir = "/data/app/" + std::string(name) + "/lib/arm64";
+    if (env->ExceptionCheck()) env->ExceptionClear();
     env->ReleaseStringUTFChars(processName, name);
     return libDir;
 }
@@ -41,19 +42,19 @@ void hack_start(const char *game_data_dir) {
     fprintf(log, "--- Start Memory Map Scan ---\n");
     fflush(log);
 
-    // Даем системе время на окончательную загрузку
-    std::this_thread::sleep_for(std::chrono::seconds(5));
+    // Даем системе время на окончательную загрузку (увеличим до 10 для стабильности)
+    std::this_thread::sleep_for(std::chrono::seconds(10));
 
     FILE *maps = fopen("/proc/self/maps", "r");
     if (maps) {
         char line[512];
         while (fgets(line, sizeof(line), maps)) {
-            // Пишем в лог все подозрительные библиотеки
-            if (strstr(line, ".so")) {
+            // Пишем в лог библиотеки, связанные с игрой и движком
+            if (strstr(line, ".so") || strstr(line, "alloc")) {
                 fprintf(log, "%s", line);
             }
 
-            // Пытаемся найти адрес il2cpp
+            // Поиск адреса il2cpp. В эмуляторах он может быть в анонимной памяти
             if ((strstr(line, "libil2cpp") || strstr(line, "unity")) && strstr(line, "r-xp")) {
                 uintptr_t base = 0;
                 if (sscanf(line, "%" SCNxPTR, &base) == 1) {
@@ -67,16 +68,15 @@ void hack_start(const char *game_data_dir) {
     }
 
     fprintf(log, "--- Scan Finished ---\n");
-    // Пытаемся запустить стандартный дамп на удачу в конце
+    fflush(log);
+    
+    // Пытаемся запустить дамп
     il2cpp_dump(game_data_dir);
     
     fclose(log);
 }
 
-void hack_prepare(const char *game_data_dir, void *data, size_t length) {
-    hack_start(game_data_dir);
-}
-
+// СТРУКТУРЫ ДЛЯ ЭМУЛЯТОРА (Native Bridge)
 static std::string GetNativeBridgeLibrary() {
     auto value = std::array<char, PROP_VALUE_MAX>();
     __system_property_get("ro.dalvik.vm.native.bridge", value.data());
@@ -103,6 +103,7 @@ struct NativeBridgeCallbacks {
 
 bool NativeBridgeLoad(const char *game_data_dir, int api_level, void *data, size_t length) {
     auto libart = dlopen("libart.so", RTLD_NOW);
+    if (!libart) return false;
     auto JNI_GetCreatedJavaVMs = (jint (*)(JavaVM **, jsize, jsize *)) dlsym(libart, "JNI_GetCreatedJavaVMs");
     
     JavaVM *vms_buf[1];
@@ -114,7 +115,7 @@ bool NativeBridgeLoad(const char *game_data_dir, int api_level, void *data, size
     auto lib_dir = GetLibDir(vms);
     if (lib_dir.empty()) return false;
 
-    auto nb = dlopen("libhoudini.so", RTLD_NOW);
+    void *nb = dlopen("libhoudini.so", RTLD_NOW);
     if (!nb) {
         auto native_bridge = GetNativeBridgeLibrary();
         nb = dlopen(native_bridge.data(), RTLD_NOW);
@@ -128,7 +129,6 @@ bool NativeBridgeLoad(const char *game_data_dir, int api_level, void *data, size
             void *mem = mmap(nullptr, length, PROT_WRITE, MAP_SHARED, fd, 0);
             memcpy(mem, data, length);
             munmap(mem, length);
-            munmap(data, length);
 
             char path[PATH_MAX];
             snprintf(path, PATH_MAX, "/proc/self/fd/%d", fd);
@@ -153,15 +153,15 @@ bool NativeBridgeLoad(const char *game_data_dir, int api_level, void *data, size
     return false;
 }
 
+// ЕДИНСТВЕННАЯ ФУНКЦИЯ hack_prepare
 void hack_prepare(const char *game_data_dir, void *data, size_t length) {
     int api_level = android_get_device_api_level();
 #if defined(__i386__) || defined(__x86_64__)
-    // Для эмуляторов пробуем сначала мост, если не выйдет - прямой старт
+    // В LDPlayer сработает эта часть
     if (!NativeBridgeLoad(game_data_dir, api_level, data, length)) {
         hack_start(game_data_dir);
     }
 #else
-    // Для реальных ARM устройств
     hack_start(game_data_dir);
 #endif
 }
