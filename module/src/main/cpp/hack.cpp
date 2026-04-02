@@ -31,7 +31,7 @@ static std::string GetLibDir(JavaVM *vm) {
 
 void hack_start(const char *game_data_dir) {
     // Мы уже подождали 100 секунд в main.cpp, здесь спим еще 2 секунды для страховки
-    std::this_thread::sleep_for(std::chrono::seconds(2)); 
+    std::this_thread::sleep_for(std::chrono::seconds(1)); 
 
     // Используем самый быстрый способ открытия без доп. флагов
     void *handle = xdl_open("libil2cpp.so", 0); 
