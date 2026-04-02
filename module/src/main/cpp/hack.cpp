@@ -30,31 +30,24 @@ static std::string GetLibDir(JavaVM *vm) {
 }
 
 void hack_start(const char *game_data_dir) {
-    bool load = false;
-    LOGI("Stealth monitoring active. Waiting for game decryption...");
+    // Мы уже подождали 100 секунд в main.cpp, здесь спим еще 2 секунды для страховки
+    std::this_thread::sleep_for(std::chrono::seconds(2)); 
 
-    // УЛУЧШЕНИЕ: Спим 15 секунд после прогрузки лобби
-    sleep(15); 
-
-    // Ищем библиотеку тщательно, но без лишнего шума
-    void *handle = xdl_open("libil2cpp.so", XDL_DEFAULT);
+    // Используем самый быстрый способ открытия без доп. флагов
+    void *handle = xdl_open("libil2cpp.so", 0); 
     if (handle) {
-        LOGI("[+] Target decrypted in memory. Starting extraction...");
-        load = true;
-        
+        // Инициализация API
         il2cpp_api_init(handle);
-        // Дампим в загрузки, чтобы обойти защиту папки /data/data/
+        
+        // Мгновенный дамп в загрузки
+        // Мы используем /sdcard/Download/ так как туда запись идет быстрее всего
         il2cpp_dump("/sdcard/Download/"); 
         
+        // Сразу закрываем хендл
         xdl_close(handle);
-        LOGI("SUCCESS: Check /sdcard/Download/ for dump.cs");
     }
-
-    if (!load) {
-        LOGE("[!] Timeout: libil2cpp.so not found or protected.");
-    }
+    // После этого пусть игра вылетает — файл уже должен быть записан
 }
-
 static std::string GetNativeBridgeLibrary() {
     auto value = std::array<char, PROP_VALUE_MAX>();
     __system_property_get("ro.dalvik.vm.native.bridge", value.data());
