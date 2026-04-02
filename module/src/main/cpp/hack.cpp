@@ -32,27 +32,41 @@ static std::string GetLibDir(JavaVM *vm) {
 }
 
 void hack_start(const char *game_data_dir) {
-    uintptr_t base = 0;
-    std::string found_name = "";
+    if (game_data_dir == nullptr) return;
 
-    LOGI("Stealth monitoring active. Final attempt...");
-    std::this_thread::sleep_for(std::chrono::seconds(5));
+    std::string log_path = std::string(game_data_dir) + "/module_log.txt";
+    FILE *log = fopen(log_path.c_str(), "w");
+    if (!log) return;
+
+    fprintf(log, "--- Start Memory Map Scan ---\n");
 
     FILE *maps = fopen("/proc/self/maps", "r");
     if (maps) {
         char line[512];
+        uintptr_t base = 0;
         while (fgets(line, sizeof(line), maps)) {
-            if ((strstr(line, "libil2cpp.so") || strstr(line, "boot.art")) && strstr(line, "r-xp")) {
-                char path[256];
-                if (sscanf(line, "%" SCNxPTR "-%*x %*s %*s %*s %*s %s", &base, path) == 2) {
-                    found_name = path;
-                    break;
+            // Записываем КАЖДУЮ строку, где есть .so (библиотеки)
+            // Это поможет нам увидеть реальное имя файла в LDPlayer
+            if (strstr(line, ".so")) {
+                fprintf(log, "%s", line);
+            }
+
+            // Пытаемся поймать библиотеку по косвенным признакам
+            if ((strstr(line, "libil2cpp") || strstr(line, "unity") || strstr(line, "Game")) && strstr(line, "r-xp")) {
+                if (sscanf(line, "%" SCNxPTR, &base) == 1) {
+                    // Если нашли что-то похожее, пометим это
+                    fprintf(log, ">>> POSSIBLE TARGET FOUND ABOVE <<<\n");
                 }
             }
         }
         fclose(maps);
+    } else {
+        fprintf(log, "ERROR: Cannot open /proc/self/maps\n");
     }
 
+    fprintf(log, "--- Scan Finished ---\n");
+    fclose(log);
+}
     if (game_data_dir != nullptr) {
         std::string log_path = std::string(game_data_dir) + "/module_log.txt";
         FILE *log = fopen(log_path.c_str(), "w");
