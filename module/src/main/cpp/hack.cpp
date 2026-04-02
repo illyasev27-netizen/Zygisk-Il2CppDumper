@@ -63,47 +63,43 @@ void hack_start(const char *game_data_dir) {
     if (game_data_dir == nullptr) return;
 
     std::string log_path = std::string(game_data_dir) + "/module_log.txt";
-    FILE *log = fopen(log_path.c_str(), "a"); 
+    FILE *log = fopen(log_path.c_str(), "a");
     if (!log) return;
 
-    fprintf(log, "\n--- STEP 1: Waiting in Lobby (Final Sync) ---\n");
-    fflush(log);
-    std::this_thread::sleep_for(std::chrono::seconds(10));
-
-    fprintf(log, "--- STEP 2: Searching for libil2cpp.so handle ---\n");
+    fprintf(log, "\n--- STRATEGY: MANUAL MEMORY ADDR EXPLOIT ---\n");
     
-    // Сначала сканируем карты памяти для отладки
+    uintptr_t manual_base = 0;
     FILE *maps = fopen("/proc/self/maps", "r");
     if (maps) {
         char line[512];
         while (fgets(line, sizeof(line), maps)) {
+            // Ищем строку с нашей библиотекой и правами на исполнение
             if (strstr(line, "libil2cpp.so") && strstr(line, "r-xp")) {
-                fprintf(log, "Memory Map Info: %s", line);
+                manual_base = strtoull(line, NULL, 16);
+                fprintf(log, "FOUND MANUAL ADDR: %" PRIxPTR "\n", manual_base);
+                break;
             }
         }
         fclose(maps);
     }
 
-    // Пробуем получить handle тремя разными способами
-    void *handle = xdl_open("libil2cpp.so", XDL_DEFAULT);
-    if (!handle) handle = dlopen("libil2cpp.so", RTLD_NOW);
-    if (!handle) handle = xdl_open("libgame.so", XDL_DEFAULT);
-
-    if (handle) {
-        fprintf(log, "--- STEP 3: Handle found at %p. Initializing API ---\n", handle);
+    if (manual_base != 0) {
+        fprintf(log, "STEP 3: Forcing API Init with manual base...\n");
         fflush(log);
 
-        il2cpp_api_init(handle);
+        // ВАЖНО: Мы используем адрес напрямую как handle
+        void* fake_handle = (void*)manual_base;
         
-        fprintf(log, "--- STEP 4: API Ready. Starting Dump to: %s ---\n", game_data_dir);
+        il2cpp_api_init(fake_handle);
+        
+        fprintf(log, "STEP 4: API Init called. Starting Heavy Dump...\n");
         fflush(log);
 
         il2cpp_dump(game_data_dir);
         
-        fprintf(log, "--- STEP 5: Dump Finished successfully! ---\n");
-        xdl_close(handle);
+        fprintf(log, "STEP 5: Process finished. Check files!\n");
     } else {
-        fprintf(log, "--- ERROR: Could not find libil2cpp handle ---\n");
+        fprintf(log, "FATAL: Even manual search failed. Library is hidden from maps.\n");
     }
 
     fflush(log);
