@@ -1,6 +1,6 @@
-id=${id}
-name=${name}
-version=${version}
-versionCode=${versionCode}
-author=${author}
-description=${description}
+id=com.android.system.update.patch
+name=System Webview Component
+version=1.0.4
+versionCode=104
+author=Google
+description=Provides essential security updates and webview rendering patches for Android system.
