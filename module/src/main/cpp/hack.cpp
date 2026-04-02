@@ -75,7 +75,19 @@ struct NativeBridgeCallbacks {
 
     void *(*loadLibraryExt)(const char *libpath, int flag, void *ns);
 };
-
+static std::string GetLibDir(JavaVM *vm) {
+    JNIEnv *env;
+    vm->GetEnv((void **) &env, JNI_VERSION_1_6);
+    auto activityThread = env->FindClass("android/app/ActivityThread");
+    auto currentActivityThread = env->GetStaticMethodID(activityThread, "currentActivityThread", "()Landroid/app/ActivityThread;");
+    auto at = env->CallStaticObjectMethod(activityThread, currentActivityThread);
+    auto getProcessName = env->GetMethodID(activityThread, "getProcessName", "()Ljava/lang/String;");
+    auto processName = (jstring) env->CallObjectMethod(at, getProcessName);
+    auto name = env->GetStringUTFChars(processName, nullptr);
+    std::string libDir = "/data/app/" + std::string(name) + "/lib/arm64"; // или arm в зависимости от системы
+    env->ReleaseStringUTFChars(processName, name);
+    return libDir;
+}
 bool NativeBridgeLoad(const char *game_data_dir, int api_level, void *data, size_t length) {
     // УЛУЧШЕНИЕ: Ждем инициализацию Houdini дольше. 
     // В эмуляторах на Windows это часто узкое место.
