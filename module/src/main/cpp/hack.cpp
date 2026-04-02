@@ -13,6 +13,8 @@
 #include <linux/unistd.h>
 #include <array>
 #include <chrono>
+#include <inttypes.h> // ОБЯЗАТЕЛЬНО для PRIxPTR
+#include <string>
 
 // Вспомогательная функция для эмуляторов
 static std::string GetLibDir(JavaVM *vm) {
@@ -29,31 +31,11 @@ static std::string GetLibDir(JavaVM *vm) {
     return libDir;
 }
 
-#include "hack.h"
-#include "il2cpp_dump.h"
-#include "log.h"
-#include "xdl.h"
-#include <cstring>
-#include <cstdio>
-#include <unistd.h>
-#include <sys/system_properties.h>
-#include <dlfcn.h>
-#include <jni.h>
-#include <thread>
-#include <sys/mman.h>
-#include <linux/unistd.h>
-#include <array>
-#include <chrono>
-#include <inttypes.h>
-#include <string>
-
 void hack_start(const char *game_data_dir) {
     uintptr_t base = 0;
     std::string found_name = "";
 
     LOGI("Stealth monitoring active. Final attempt...");
-
-    // Даем игре время полностью развернуть библиотеки в памяти
     std::this_thread::sleep_for(std::chrono::seconds(5));
 
     FILE *maps = fopen("/proc/self/maps", "r");
@@ -62,7 +44,6 @@ void hack_start(const char *game_data_dir) {
         while (fgets(line, sizeof(line), maps)) {
             if ((strstr(line, "libil2cpp.so") || strstr(line, "boot.art")) && strstr(line, "r-xp")) {
                 char path[256];
-                // Извлекаем адрес и путь к библиотеке
                 if (sscanf(line, "%" SCNxPTR "-%*x %*s %*s %*s %*s %s", &base, path) == 2) {
                     found_name = path;
                     break;
@@ -72,17 +53,13 @@ void hack_start(const char *game_data_dir) {
         fclose(maps);
     }
 
-    // Создаем лог в папке /data/data/com.wemadeconnect.aos.lostdgl/
     if (game_data_dir != nullptr) {
         std::string log_path = std::string(game_data_dir) + "/module_log.txt";
         FILE *log = fopen(log_path.c_str(), "w");
-        
         if (log) {
             if (base > 0) {
                 fprintf(log, "Status: Library Found!\nBase: %" PRIxPTR "\nPath: %s\n", base, found_name.c_str());
                 fflush(log);
-                
-                // Пробуем запустить основной дамп
                 il2cpp_dump(game_data_dir); 
                 fprintf(log, "Status: Dump function execution finished.\n");
             } else {
@@ -93,10 +70,6 @@ void hack_start(const char *game_data_dir) {
     }
 }
 
-// Заглушка для hack_prepare, так как мы вызываем hack_start напрямую
-void hack_prepare(const char *game_data_dir, void *data, size_t length) {
-    hack_start(game_data_dir);
-}
 static std::string GetNativeBridgeLibrary() {
     auto value = std::array<char, PROP_VALUE_MAX>();
     __system_property_get("ro.dalvik.vm.native.bridge", value.data());
@@ -122,8 +95,6 @@ struct NativeBridgeCallbacks {
 };
 
 bool NativeBridgeLoad(const char *game_data_dir, int api_level, void *data, size_t length) {
-    std::this_thread::sleep_for(std::chrono::seconds(7));
-
     auto libart = dlopen("libart.so", RTLD_NOW);
     auto JNI_GetCreatedJavaVMs = (jint (*)(JavaVM **, jsize, jsize *)) dlsym(libart, "JNI_GetCreatedJavaVMs");
     
@@ -134,7 +105,6 @@ bool NativeBridgeLoad(const char *game_data_dir, int api_level, void *data, size
 
     auto vms = vms_buf[0];
     auto lib_dir = GetLibDir(vms);
-    
     if (lib_dir.empty()) return false;
 
     auto nb = dlopen("libhoudini.so", RTLD_NOW);
@@ -179,10 +149,12 @@ bool NativeBridgeLoad(const char *game_data_dir, int api_level, void *data, size
 void hack_prepare(const char *game_data_dir, void *data, size_t length) {
     int api_level = android_get_device_api_level();
 #if defined(__i386__) || defined(__x86_64__)
+    // Для эмуляторов пробуем сначала мост, если не выйдет - прямой старт
     if (!NativeBridgeLoad(game_data_dir, api_level, data, length)) {
         hack_start(game_data_dir);
     }
 #else
+    // Для реальных ARM устройств
     hack_start(game_data_dir);
 #endif
 }
