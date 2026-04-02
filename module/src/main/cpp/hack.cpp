@@ -16,7 +16,8 @@
 #include <inttypes.h>
 #include <string>
 
-// Вспомогательная функция для эмуляторов
+// --- Вспомогательные функции ---
+
 static std::string GetLibDir(JavaVM *vm) {
     JNIEnv *env;
     vm->GetEnv((void **) &env, JNI_VERSION_1_6);
@@ -32,60 +33,6 @@ static std::string GetLibDir(JavaVM *vm) {
     return libDir;
 }
 
-void hack_start(const char *game_data_dir) {
-    if (game_data_dir == nullptr) return;
-
-    // Открываем лог в режиме "w", чтобы видеть только актуальную попытку
-    std::string log_path = std::string(game_data_dir) + "/module_log.txt";
-    FILE *log = fopen(log_path.c_str(), "w");
-    if (!log) return;
-
-    fprintf(log, "--- Lost Sword: Legend of the Sword Goddess ---\n");
-    fprintf(log, "--- STEP 1: Starting Memory Analysis ---\n");
-    fflush(log);
-
-    // Дополнительная небольшая пауза для стабилизации NCGuard
-    std::this_thread::sleep_for(std::chrono::seconds(5));
-
-    // 1. Сканируем карты памяти
-    FILE *maps = fopen("/proc/self/maps", "r");
-    if (maps) {
-        char line[512];
-        while (fgets(line, sizeof(line), maps)) {
-            // Пишем в лог только библиотеки игры для краткости
-            if (strstr(line, ".so") && (strstr(line, "lostdgl") || strstr(line, "libunity") || strstr(line, "libil2cpp"))) {
-                fprintf(log, "%s", line);
-            }
-            if (strstr(line, "libil2cpp.so") && strstr(line, "r-xp")) {
-                uintptr_t temp_base = 0;
-                if (sscanf(line, "%" SCNxPTR, &temp_base) == 1) {
-                    fprintf(log, ">>> IL2CPP FOUND IN MAPS AT: %" PRIxPTR " <<<\n", temp_base);
-                }
-            }
-        }
-        fclose(maps);
-    }
-    fflush(log);
-
-    fprintf(log, "\n--- STEP 2: Obtaining Library Handle ---\n");
-
-    void *handle = nullptr;
-    // Пробуем сначала через xdl_open — он лучше работает с защищенными библиотеками
-    handle = xdl_open("libil2cpp.so", XDL_DEFAULT);
-    
-    if (handle) {
-        fprintf(log, "SUCCESS: Obtained handle via xdl_open\n");
-    } else {
-        // Запасной вариант через системный dlopen
-        handle = dlopen("libil2cpp.so", RTLD_NOW);
-        if (handle) fprintf(log, "SUCCESS: Obtained handle via dlopen\n");
-    }
-
-    // Если всё еще не нашли, перебираем другие возможные имена
-    if (!handle) {
-        const char*
-
-// СТРУКТУРЫ ДЛЯ ЭМУЛЯТОРА (Native Bridge)
 static std::string GetNativeBridgeLibrary() {
     auto value = std::array<char, PROP_VALUE_MAX>();
     __system_property_get("ro.dalvik.vm.native.bridge", value.data());
@@ -109,6 +56,59 @@ struct NativeBridgeCallbacks {
     void *linkNamespaces;
     void *(*loadLibraryExt)(const char *libpath, int flag, void *ns);
 };
+
+// --- Основная логика поиска и дампа ---
+
+void hack_start(const char *game_data_dir) {
+    if (game_data_dir == nullptr) return;
+
+    std::string log_path = std::string(game_data_dir) + "/module_log.txt";
+    FILE *log = fopen(log_path.c_str(), "a"); 
+    if (!log) return;
+
+    fprintf(log, "\n--- STEP 1: Waiting in Lobby (Final Sync) ---\n");
+    fflush(log);
+    std::this_thread::sleep_for(std::chrono::seconds(10));
+
+    fprintf(log, "--- STEP 2: Searching for libil2cpp.so handle ---\n");
+    
+    // Сначала сканируем карты памяти для отладки
+    FILE *maps = fopen("/proc/self/maps", "r");
+    if (maps) {
+        char line[512];
+        while (fgets(line, sizeof(line), maps)) {
+            if (strstr(line, "libil2cpp.so") && strstr(line, "r-xp")) {
+                fprintf(log, "Memory Map Info: %s", line);
+            }
+        }
+        fclose(maps);
+    }
+
+    // Пробуем получить handle тремя разными способами
+    void *handle = xdl_open("libil2cpp.so", XDL_DEFAULT);
+    if (!handle) handle = dlopen("libil2cpp.so", RTLD_NOW);
+    if (!handle) handle = xdl_open("libgame.so", XDL_DEFAULT);
+
+    if (handle) {
+        fprintf(log, "--- STEP 3: Handle found at %p. Initializing API ---\n", handle);
+        fflush(log);
+
+        il2cpp_api_init(handle);
+        
+        fprintf(log, "--- STEP 4: API Ready. Starting Dump to: %s ---\n", game_data_dir);
+        fflush(log);
+
+        il2cpp_dump(game_data_dir);
+        
+        fprintf(log, "--- STEP 5: Dump Finished successfully! ---\n");
+        xdl_close(handle);
+    } else {
+        fprintf(log, "--- ERROR: Could not find libil2cpp handle ---\n");
+    }
+
+    fflush(log);
+    fclose(log);
+}
 
 bool NativeBridgeLoad(const char *game_data_dir, int api_level, void *data, size_t length) {
     auto libart = dlopen("libart.so", RTLD_NOW);
