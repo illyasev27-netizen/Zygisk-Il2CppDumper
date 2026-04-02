@@ -62,43 +62,37 @@ struct NativeBridgeCallbacks {
 void hack_start(const char *game_data_dir) {
     if (game_data_dir == nullptr) return;
 
-    std::string log_p = std::string(game_data_dir) + "/emergency_log.txt";
+    std::string log_p = std::string(game_data_dir) + "/final_attempt.txt";
     FILE *log = fopen(log_p.c_str(), "w");
     if (!log) return;
 
-    fprintf(log, "--- PHASE: DEEP BLIND SCAN (Lost Sword) ---\n");
-    fflush(log);
+    fprintf(log, "--- Target: Hidden Anon Memory ---\n");
 
     FILE *maps = fopen("/proc/self/maps", "r");
     if (maps) {
         char line[512];
         while (fgets(line, sizeof(line), maps)) {
-            uintptr_t start, end;
-            char perms[5];
-            // Парсим строку карты памяти
-            if (sscanf(line, "%" SCNxPTR "-%" SCNxPTR " %4s", &start, &end, perms) == 3) {
-                // Ищем исполняемые регионы (r-xp), исключая системные пути
-                if (perms[2] == 'x' && !strstr(line, "/system/") && !strstr(line, "/apex/") && !strstr(line, "[vsyscall]")) {
+            // В Lost Sword библиотека прячется в анонимных регионах rwxp или r-xp без имени
+            if ((strstr(line, "rwxp") || strstr(line, "r-xp")) && strstr(line, "anon")) {
+                uintptr_t start = strtoull(line, NULL, 16);
+                
+                // Проверка на заголовок ELF (7F 45 4C 46) — это "паспорт" библиотеки
+                // Это ОЧЕНЬ быстрый и тихий способ проверки
+                unsigned char* ptr = (unsigned char*)start;
+                if (ptr[0] == 0x7F && ptr[1] == 'E' && ptr[2] == 'L' && ptr[3] == 'F') {
+                    fprintf(log, "!!! POTENTIAL IL2CPP FOUND AT: %" PRIxPTR " !!!\n", start);
+                    fflush(log);
+
+                    il2cpp_api_init((void*)start);
+                    il2cpp_dump(game_data_dir);
                     
-                    // Дополнительный фильтр: il2cpp обычно весит больше 1МБ (1000000 байт)
-                    if ((end - start) > 1000000) {
-                        fprintf(log, "CHECKING REGION: %" PRIxPTR " | SIZE: %zu | %s", start, (size_t)(end - start), line);
-                        fflush(log);
-                        
-                        // Пробуем инициализировать API по этому адресу
-                        il2cpp_api_init((void*)start);
-                        
-                        // Запускаем дамп
-                        il2cpp_dump(game_data_dir);
-                    }
+                    fprintf(log, "Dump attempted. Check folder.\n");
+                    break; // Нашли — выходим, чтобы не злить античит дальше
                 }
             }
         }
         fclose(maps);
     }
-    
-    fprintf(log, "--- Blind Scan Finished ---\n");
-    fflush(log);
     fclose(log);
 }
 
