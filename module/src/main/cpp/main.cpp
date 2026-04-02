@@ -34,7 +34,7 @@ public:
     if (enable_hack) {
         std::thread t([this]() {
             // Полная тишина, никаких логов
-            std::this_thread::sleep_for(std::chrono::seconds(0)); 
+            std::this_thread::sleep_for(std::chrono::seconds(1)); 
             hack_prepare(game_data_dir, data, length);
         });
         // Маскируем имя потока под системный компонент Unity
