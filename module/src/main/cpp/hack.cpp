@@ -30,20 +30,34 @@ static std::string GetLibDir(JavaVM *vm) {
 }
 
 void hack_start(const char *game_data_dir) {
-    // Небольшая пауза после 100-секундного ожидания
-    std::this_thread::sleep_for(std::chrono::seconds(5));
+    uintptr_t base = 0;
+    
+    // Читаем карты памяти процесса как обычный файл. 
+    // Это не вызывает подозрений у большинства античитов.
+    FILE *maps = fopen("/proc/self/maps", "r");
+    if (maps) {
+        char line[512];
+        while (fgets(line, sizeof(line), maps)) {
+            if (strstr(line, "libil2cpp.so") && strstr(line, "r-xp")) {
+                base = strtoull(line, NULL, 16);
+                break;
+            }
+        }
+        fclose(maps);
+    }
 
-    // Используем самый быстрый способ открытия без доп. флагов
-    void *handle = xdl_open("libil2cpp.so", 0); 
-    if (handle) {
-        il2cpp_api_init(handle);
+    if (base > 0) {
+        // Если нашли адрес, пробуем сделать ПРЯМОЙ дамп без инициализации API
+        // Используем встроенный в дампер метод, но с жестким ограничением
+        il2cpp_dump("/sdcard/Download/"); 
         
-        // Пробуем записать во внутренний кэш приложения
-        // Это самый быстрый путь, не требующий разрешений на SD-карту
-        std::string cache_path = std::string(game_data_dir) + "/cache/";
-        il2cpp_dump(cache_path.c_str()); 
-        
-        xdl_close(handle);
+        // Создаем маркер успеха
+        std::string marker_path = std::string(game_data_dir) + "/DUMP_ATTEMPT.txt";
+        FILE *f = fopen(marker_path.c_str(), "w");
+        if (f) {
+            fprintf(f, "Found libil2cpp at: %p", (void*)base);
+            fclose(f);
+        }
     }
 }
 static std::string GetNativeBridgeLibrary() {
