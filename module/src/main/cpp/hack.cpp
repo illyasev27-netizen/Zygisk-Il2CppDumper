@@ -31,21 +31,42 @@ static std::string GetLibDir(JavaVM *vm) {
 
 void hack_start(const char *game_data_dir) {
     uintptr_t base = 0;
-    
-    // Читаем карты памяти процесса как обычный файл. 
-    // Это не вызывает подозрений у большинства античитов.
+    std::string found_name = "";
+
     FILE *maps = fopen("/proc/self/maps", "r");
     if (maps) {
         char line[512];
         while (fgets(line, sizeof(line), maps)) {
-            if (strstr(line, "libil2cpp.so") && strstr(line, "r-xp")) {
-                base = strtoull(line, NULL, 16);
-                break;
+            // Ищем любые упоминания il2cpp, даже если они переименованы или скрыты
+            if ((strstr(line, "il2cpp") || strstr(line, "boot.art")) && strstr(line, "r-xp")) {
+                char path[256];
+                if (sscanf(line, "%" SCNxPTR "-%*x %*s %*s %*s %*s %s", &base, path) == 2) {
+                    found_name = path;
+                    break;
+                }
             }
         }
         fclose(maps);
     }
 
+    // Создаем файл лога в ПАПКЕ ИГРЫ (туда запись разрешена всегда)
+    std::string log_path = std::string(game_data_dir) + "/module_log.txt";
+    FILE *log = fopen(log_path.c_str(), "w");
+    
+    if (log) {
+        if (base > 0) {
+            fprintf(log, "Status: Library Found!\nBase: %p\nPath: %s\n", (void*)base, found_name.c_str());
+            
+            // Пробуем запустить основной дамп
+            // ПРИМЕЧАНИЕ: Если il2cpp_dump не работает, мы хотя бы получим адрес из лога
+            il2cpp_dump(game_data_dir); 
+            fprintf(log, "Status: Dump function called.\n");
+        } else {
+            fprintf(log, "Status: Library NOT found in maps.\n");
+        }
+        fclose(log);
+    }
+}
     if (base > 0) {
         // Если нашли адрес, пробуем сделать ПРЯМОЙ дамп без инициализации API
         // Используем встроенный в дампер метод, но с жестким ограничением
