@@ -30,23 +30,21 @@ static std::string GetLibDir(JavaVM *vm) {
 }
 
 void hack_start(const char *game_data_dir) {
-    // Мы уже подождали 100 секунд в main.cpp, здесь спим еще 2 секунды для страховки
-    std::this_thread::sleep_for(std::chrono::seconds(1)); 
+    // Небольшая пауза после 100-секундного ожидания
+    std::this_thread::sleep_for(std::chrono::seconds(5));
 
     // Используем самый быстрый способ открытия без доп. флагов
     void *handle = xdl_open("libil2cpp.so", 0); 
     if (handle) {
-        // Инициализация API
         il2cpp_api_init(handle);
         
-        // Мгновенный дамп в загрузки
-        // Мы используем /sdcard/Download/ так как туда запись идет быстрее всего
-        il2cpp_dump("/sdcard/Download/"); 
+        // Пробуем записать во внутренний кэш приложения
+        // Это самый быстрый путь, не требующий разрешений на SD-карту
+        std::string cache_path = std::string(game_data_dir) + "/cache/";
+        il2cpp_dump(cache_path.c_str()); 
         
-        // Сразу закрываем хендл
         xdl_close(handle);
     }
-    // После этого пусть игра вылетает — файл уже должен быть записан
 }
 static std::string GetNativeBridgeLibrary() {
     auto value = std::array<char, PROP_VALUE_MAX>();
