@@ -62,46 +62,42 @@ struct NativeBridgeCallbacks {
 void hack_start(const char *game_data_dir) {
     if (game_data_dir == nullptr) return;
 
-    std::string log_path = std::string(game_data_dir) + "/module_log.txt";
-    FILE *log = fopen(log_path.c_str(), "a");
+    std::string log_p = std::string(game_data_dir) + "/emergency_log.txt";
+    FILE *log = fopen(log_p.c_str(), "w");
     if (!log) return;
 
-    fprintf(log, "\n--- STRATEGY: MANUAL MEMORY ADDR EXPLOIT ---\n");
-    
-    uintptr_t manual_base = 0;
+    fprintf(log, "--- PHASE: DEEP BLIND SCAN (Lost Sword) ---\n");
+    fflush(log);
+
     FILE *maps = fopen("/proc/self/maps", "r");
     if (maps) {
         char line[512];
         while (fgets(line, sizeof(line), maps)) {
-            // Ищем строку с нашей библиотекой и правами на исполнение
-            if (strstr(line, "libil2cpp.so") && strstr(line, "r-xp")) {
-                manual_base = strtoull(line, NULL, 16);
-                fprintf(log, "FOUND MANUAL ADDR: %" PRIxPTR "\n", manual_base);
-                break;
+            uintptr_t start, end;
+            char perms[5];
+            // Парсим строку карты памяти
+            if (sscanf(line, "%" SCNxPTR "-%" SCNxPTR " %4s", &start, &end, perms) == 3) {
+                // Ищем исполняемые регионы (r-xp), исключая системные пути
+                if (perms[2] == 'x' && !strstr(line, "/system/") && !strstr(line, "/apex/") && !strstr(line, "[vsyscall]")) {
+                    
+                    // Дополнительный фильтр: il2cpp обычно весит больше 1МБ (1000000 байт)
+                    if ((end - start) > 1000000) {
+                        fprintf(log, "CHECKING REGION: %" PRIxPTR " | SIZE: %zu | %s", start, (size_t)(end - start), line);
+                        fflush(log);
+                        
+                        // Пробуем инициализировать API по этому адресу
+                        il2cpp_api_init((void*)start);
+                        
+                        // Запускаем дамп
+                        il2cpp_dump(game_data_dir);
+                    }
+                }
             }
         }
         fclose(maps);
     }
-
-    if (manual_base != 0) {
-        fprintf(log, "STEP 3: Forcing API Init with manual base...\n");
-        fflush(log);
-
-        // ВАЖНО: Мы используем адрес напрямую как handle
-        void* fake_handle = (void*)manual_base;
-        
-        il2cpp_api_init(fake_handle);
-        
-        fprintf(log, "STEP 4: API Init called. Starting Heavy Dump...\n");
-        fflush(log);
-
-        il2cpp_dump(game_data_dir);
-        
-        fprintf(log, "STEP 5: Process finished. Check files!\n");
-    } else {
-        fprintf(log, "FATAL: Even manual search failed. Library is hidden from maps.\n");
-    }
-
+    
+    fprintf(log, "--- Blind Scan Finished ---\n");
     fflush(log);
     fclose(log);
 }
