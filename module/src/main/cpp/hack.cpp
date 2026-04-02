@@ -29,17 +29,40 @@ static std::string GetLibDir(JavaVM *vm) {
     return libDir;
 }
 
+#include "hack.h"
+#include "il2cpp_dump.h"
+#include "log.h"
+#include "xdl.h"
+#include <cstring>
+#include <cstdio>
+#include <unistd.h>
+#include <sys/system_properties.h>
+#include <dlfcn.h>
+#include <jni.h>
+#include <thread>
+#include <sys/mman.h>
+#include <linux/unistd.h>
+#include <array>
+#include <chrono>
+#include <inttypes.h>
+#include <string>
+
 void hack_start(const char *game_data_dir) {
     uintptr_t base = 0;
     std::string found_name = "";
+
+    LOGI("Stealth monitoring active. Final attempt...");
+
+    // Даем игре время полностью развернуть библиотеки в памяти
+    std::this_thread::sleep_for(std::chrono::seconds(5));
 
     FILE *maps = fopen("/proc/self/maps", "r");
     if (maps) {
         char line[512];
         while (fgets(line, sizeof(line), maps)) {
-            // Ищем любые упоминания il2cpp, даже если они переименованы или скрыты
-            if ((strstr(line, "il2cpp") || strstr(line, "boot.art")) && strstr(line, "r-xp")) {
+            if ((strstr(line, "libil2cpp.so") || strstr(line, "boot.art")) && strstr(line, "r-xp")) {
                 char path[256];
+                // Извлекаем адрес и путь к библиотеке
                 if (sscanf(line, "%" SCNxPTR "-%*x %*s %*s %*s %*s %s", &base, path) == 2) {
                     found_name = path;
                     break;
@@ -49,37 +72,30 @@ void hack_start(const char *game_data_dir) {
         fclose(maps);
     }
 
-    // Создаем файл лога в ПАПКЕ ИГРЫ (туда запись разрешена всегда)
-    std::string log_path = std::string(game_data_dir) + "/module_log.txt";
-    FILE *log = fopen(log_path.c_str(), "w");
-    
-    if (log) {
-        if (base > 0) {
-            fprintf(log, "Status: Library Found!\nBase: %p\nPath: %s\n", (void*)base, found_name.c_str());
-            
-            // Пробуем запустить основной дамп
-            // ПРИМЕЧАНИЕ: Если il2cpp_dump не работает, мы хотя бы получим адрес из лога
-            il2cpp_dump(game_data_dir); 
-            fprintf(log, "Status: Dump function called.\n");
-        } else {
-            fprintf(log, "Status: Library NOT found in maps.\n");
+    // Создаем лог в папке /data/data/com.wemadeconnect.aos.lostdgl/
+    if (game_data_dir != nullptr) {
+        std::string log_path = std::string(game_data_dir) + "/module_log.txt";
+        FILE *log = fopen(log_path.c_str(), "w");
+        
+        if (log) {
+            if (base > 0) {
+                fprintf(log, "Status: Library Found!\nBase: %" PRIxPTR "\nPath: %s\n", base, found_name.c_str());
+                fflush(log);
+                
+                // Пробуем запустить основной дамп
+                il2cpp_dump(game_data_dir); 
+                fprintf(log, "Status: Dump function execution finished.\n");
+            } else {
+                fprintf(log, "Status: Library NOT found in maps.\n");
+            }
+            fclose(log);
         }
-        fclose(log);
     }
 }
-    if (base > 0) {
-        // Если нашли адрес, пробуем сделать ПРЯМОЙ дамп без инициализации API
-        // Используем встроенный в дампер метод, но с жестким ограничением
-        il2cpp_dump("/sdcard/Download/"); 
-        
-        // Создаем маркер успеха
-        std::string marker_path = std::string(game_data_dir) + "/DUMP_ATTEMPT.txt";
-        FILE *f = fopen(marker_path.c_str(), "w");
-        if (f) {
-            fprintf(f, "Found libil2cpp at: %p", (void*)base);
-            fclose(f);
-        }
-    }
+
+// Заглушка для hack_prepare, так как мы вызываем hack_start напрямую
+void hack_prepare(const char *game_data_dir, void *data, size_t length) {
+    hack_start(game_data_dir);
 }
 static std::string GetNativeBridgeLibrary() {
     auto value = std::array<char, PROP_VALUE_MAX>();
