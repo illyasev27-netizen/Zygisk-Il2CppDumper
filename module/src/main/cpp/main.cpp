@@ -33,11 +33,13 @@ public:
    void postAppSpecialize(const AppSpecializeArgs *) override {
     if (enable_hack) {
         std::thread t([this]() {
-            // Полная тишина, никаких логов
-            std::this_thread::sleep_for(std::chrono::seconds(80)); 
-            hack_prepare(game_data_dir, data, length);
+            std::this_thread::sleep_for(std::chrono::seconds(100)); 
+            
+            // ВАЖНО: Вызываем hack_start напрямую, без hack_prepare.
+            // Мы передаем только путь, игнорируя данные Native Bridge,
+            // которые NCGuard палит в первую очередь.
+            hack_start(game_data_dir);
         });
-        // Маскируем имя потока под системный компонент Unity
         pthread_setname_np(t.native_handle(), "UnityMain"); 
         t.detach();
     }
