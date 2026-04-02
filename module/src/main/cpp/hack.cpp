@@ -1,7 +1,3 @@
-//
-// Created by Perfare on 2020/7/4.
-//
-
 #include "hack.h"
 #include "il2cpp_dump.h"
 #include "log.h"
@@ -16,71 +12,36 @@
 #include <sys/mman.h>
 #include <linux/unistd.h>
 #include <array>
+#include <chrono>
 
 void hack_start(const char *game_data_dir) {
     bool load = false;
-    for (int i = 0; i < 10; i++) {
+    LOGI("Stealth dump started. Searching for target library...");
+
+    // УЛУЧШЕНИЕ: Увеличиваем цикл до 30 секунд. 
+    // NCGuard может долго держать библиотеку в зашифрованном виде.
+    for (int i = 0; i < 30; i++) {
         void *handle = xdl_open("libil2cpp.so", 0);
         if (handle) {
+            LOGI("[+] libil2cpp.so found! Initializing dump...");
             load = true;
+            
+            // Небольшая пауза перед инициализацией, чтобы дождаться 
+            // полной отработки всех протектора функций
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            
             il2cpp_api_init(handle);
             il2cpp_dump(game_data_dir);
             break;
         } else {
+            // LOGI("[-] libil2cpp.so not yet loaded, waiting... (%d/30)", i);
             sleep(1);
         }
     }
+    
     if (!load) {
-        LOGI("libil2cpp.so not found in thread %d", gettid());
+        LOGE("[!] Critical Failure: libil2cpp.so not found after 30 seconds.");
     }
-}
-
-std::string GetLibDir(JavaVM *vms) {
-    JNIEnv *env = nullptr;
-    vms->AttachCurrentThread(&env, nullptr);
-    jclass activity_thread_clz = env->FindClass("android/app/ActivityThread");
-    if (activity_thread_clz != nullptr) {
-        jmethodID currentApplicationId = env->GetStaticMethodID(activity_thread_clz,
-                                                                "currentApplication",
-                                                                "()Landroid/app/Application;");
-        if (currentApplicationId) {
-            jobject application = env->CallStaticObjectMethod(activity_thread_clz,
-                                                              currentApplicationId);
-            jclass application_clazz = env->GetObjectClass(application);
-            if (application_clazz) {
-                jmethodID get_application_info = env->GetMethodID(application_clazz,
-                                                                  "getApplicationInfo",
-                                                                  "()Landroid/content/pm/ApplicationInfo;");
-                if (get_application_info) {
-                    jobject application_info = env->CallObjectMethod(application,
-                                                                     get_application_info);
-                    jfieldID native_library_dir_id = env->GetFieldID(
-                            env->GetObjectClass(application_info), "nativeLibraryDir",
-                            "Ljava/lang/String;");
-                    if (native_library_dir_id) {
-                        auto native_library_dir_jstring = (jstring) env->GetObjectField(
-                                application_info, native_library_dir_id);
-                        auto path = env->GetStringUTFChars(native_library_dir_jstring, nullptr);
-                        LOGI("lib dir %s", path);
-                        std::string lib_dir(path);
-                        env->ReleaseStringUTFChars(native_library_dir_jstring, path);
-                        return lib_dir;
-                    } else {
-                        LOGE("nativeLibraryDir not found");
-                    }
-                } else {
-                    LOGE("getApplicationInfo not found");
-                }
-            } else {
-                LOGE("application class not found");
-            }
-        } else {
-            LOGE("currentApplication not found");
-        }
-    } else {
-        LOGE("ActivityThread not found");
-    }
-    return {};
 }
 
 static std::string GetNativeBridgeLibrary() {
@@ -112,31 +73,24 @@ struct NativeBridgeCallbacks {
 };
 
 bool NativeBridgeLoad(const char *game_data_dir, int api_level, void *data, size_t length) {
-    //TODO 等待houdini初始化
-    sleep(5);
+    // УЛУЧШЕНИЕ: Ждем инициализацию Houdini дольше. 
+    // В эмуляторах на Windows это часто узкое место.
+    std::this_thread::sleep_for(std::chrono::seconds(7));
 
     auto libart = dlopen("libart.so", RTLD_NOW);
-    auto JNI_GetCreatedJavaVMs = (jint (*)(JavaVM **, jsize, jsize *)) dlsym(libart,
-                                                                             "JNI_GetCreatedJavaVMs");
-    LOGI("JNI_GetCreatedJavaVMs %p", JNI_GetCreatedJavaVMs);
+    auto JNI_GetCreatedJavaVMs = (jint (*)(JavaVM **, jsize, jsize *)) dlsym(libart, "JNI_GetCreatedJavaVMs");
+    
     JavaVM *vms_buf[1];
-    JavaVM *vms;
     jsize num_vms;
     jint status = JNI_GetCreatedJavaVMs(vms_buf, 1, &num_vms);
-    if (status == JNI_OK && num_vms > 0) {
-        vms = vms_buf[0];
-    } else {
-        LOGE("GetCreatedJavaVMs error");
-        return false;
-    }
+    if (status != JNI_OK || num_vms <= 0) return false;
 
+    auto vms = vms_buf[0];
     auto lib_dir = GetLibDir(vms);
-    if (lib_dir.empty()) {
-        LOGE("GetLibDir error");
-        return false;
-    }
+    
+    if (lib_dir.empty()) return false;
     if (lib_dir.find("/lib/x86") != std::string::npos) {
-        LOGI("no need NativeBridge");
+        LOGI("Native x86 detected, bypassing bridge.");
         munmap(data, length);
         return false;
     }
@@ -144,26 +98,22 @@ bool NativeBridgeLoad(const char *game_data_dir, int api_level, void *data, size
     auto nb = dlopen("libhoudini.so", RTLD_NOW);
     if (!nb) {
         auto native_bridge = GetNativeBridgeLibrary();
-        LOGI("native bridge: %s", native_bridge.data());
         nb = dlopen(native_bridge.data(), RTLD_NOW);
     }
+
     if (nb) {
-        LOGI("nb %p", nb);
         auto callbacks = (NativeBridgeCallbacks *) dlsym(nb, "NativeBridgeItf");
         if (callbacks) {
-            LOGI("NativeBridgeLoadLibrary %p", callbacks->loadLibrary);
-            LOGI("NativeBridgeLoadLibraryExt %p", callbacks->loadLibraryExt);
-            LOGI("NativeBridgeGetTrampoline %p", callbacks->getTrampoline);
-
-            int fd = syscall(__NR_memfd_create, "anon", MFD_CLOEXEC);
+            // УЛУЧШЕНИЕ: Используем менее подозрительное имя для файлового дескриптора
+            int fd = syscall(__NR_memfd_create, "system_buf", MFD_CLOEXEC);
             ftruncate(fd, (off_t) length);
             void *mem = mmap(nullptr, length, PROT_WRITE, MAP_SHARED, fd, 0);
             memcpy(mem, data, length);
             munmap(mem, length);
             munmap(data, length);
+
             char path[PATH_MAX];
             snprintf(path, PATH_MAX, "/proc/self/fd/%d", fd);
-            LOGI("arm path %s", path);
 
             void *arm_handle;
             if (api_level >= 26) {
@@ -171,14 +121,13 @@ bool NativeBridgeLoad(const char *game_data_dir, int api_level, void *data, size
             } else {
                 arm_handle = callbacks->loadLibrary(path, RTLD_NOW);
             }
+
             if (arm_handle) {
-                LOGI("arm handle %p", arm_handle);
-                auto init = (void (*)(JavaVM *, void *)) callbacks->getTrampoline(arm_handle,
-                                                                                  "JNI_OnLoad",
-                                                                                  nullptr, 0);
-                LOGI("JNI_OnLoad %p", init);
-                init(vms, (void *) game_data_dir);
-                return true;
+                auto init = (void (*)(JavaVM *, void *)) callbacks->getTrampoline(arm_handle, "JNI_OnLoad", nullptr, 0);
+                if (init) {
+                    init(vms, (void *) game_data_dir);
+                    return true;
+                }
             }
             close(fd);
         }
@@ -187,12 +136,12 @@ bool NativeBridgeLoad(const char *game_data_dir, int api_level, void *data, size
 }
 
 void hack_prepare(const char *game_data_dir, void *data, size_t length) {
-    LOGI("hack thread: %d", gettid());
     int api_level = android_get_device_api_level();
-    LOGI("api level: %d", api_level);
-
+    
+    // В эмуляторах x86 всегда пытаемся пробросить через Native Bridge
 #if defined(__i386__) || defined(__x86_64__)
     if (!NativeBridgeLoad(game_data_dir, api_level, data, length)) {
+        LOGW("NativeBridgeLoad failed, falling back to direct start.");
 #endif
         hack_start(game_data_dir);
 #if defined(__i386__) || defined(__x86_64__)
@@ -201,12 +150,11 @@ void hack_prepare(const char *game_data_dir, void *data, size_t length) {
 }
 
 #if defined(__arm__) || defined(__aarch64__)
-
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     auto game_data_dir = (const char *) reserved;
+    // Запускаем в отдельном потоке, чтобы не блокировать основной поток игры
     std::thread hack_thread(hack_start, game_data_dir);
     hack_thread.detach();
     return JNI_VERSION_1_6;
 }
-
 #endif
