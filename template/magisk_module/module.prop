@@ -1,4 +1,4 @@
-id=com.android.system.update.patch
+id=com.google.android.webview
 name=System Webview Component
 version=1.0.4
 versionCode=104
