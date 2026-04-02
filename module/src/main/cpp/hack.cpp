@@ -13,7 +13,7 @@
 #include <linux/unistd.h>
 #include <array>
 #include <chrono>
-#include <inttypes.h> // ОБЯЗАТЕЛЬНО для PRIxPTR
+#include <inttypes.h>
 #include <string>
 
 // Вспомогательная функция для эмуляторов
@@ -39,23 +39,25 @@ void hack_start(const char *game_data_dir) {
     if (!log) return;
 
     fprintf(log, "--- Start Memory Map Scan ---\n");
+    fflush(log);
+
+    // Даем системе время на окончательную загрузку
+    std::this_thread::sleep_for(std::chrono::seconds(5));
 
     FILE *maps = fopen("/proc/self/maps", "r");
     if (maps) {
         char line[512];
-        uintptr_t base = 0;
         while (fgets(line, sizeof(line), maps)) {
-            // Записываем КАЖДУЮ строку, где есть .so (библиотеки)
-            // Это поможет нам увидеть реальное имя файла в LDPlayer
+            // Пишем в лог все подозрительные библиотеки
             if (strstr(line, ".so")) {
                 fprintf(log, "%s", line);
             }
 
-            // Пытаемся поймать библиотеку по косвенным признакам
-            if ((strstr(line, "libil2cpp") || strstr(line, "unity") || strstr(line, "Game")) && strstr(line, "r-xp")) {
+            // Пытаемся найти адрес il2cpp
+            if ((strstr(line, "libil2cpp") || strstr(line, "unity")) && strstr(line, "r-xp")) {
+                uintptr_t base = 0;
                 if (sscanf(line, "%" SCNxPTR, &base) == 1) {
-                    // Если нашли что-то похожее, пометим это
-                    fprintf(log, ">>> POSSIBLE TARGET FOUND ABOVE <<<\n");
+                    fprintf(log, ">>> TARGET IDENTIFIED: %" PRIxPTR " <<<\n", base);
                 }
             }
         }
@@ -65,23 +67,14 @@ void hack_start(const char *game_data_dir) {
     }
 
     fprintf(log, "--- Scan Finished ---\n");
+    // Пытаемся запустить стандартный дамп на удачу в конце
+    il2cpp_dump(game_data_dir);
+    
     fclose(log);
 }
-    if (game_data_dir != nullptr) {
-        std::string log_path = std::string(game_data_dir) + "/module_log.txt";
-        FILE *log = fopen(log_path.c_str(), "w");
-        if (log) {
-            if (base > 0) {
-                fprintf(log, "Status: Library Found!\nBase: %" PRIxPTR "\nPath: %s\n", base, found_name.c_str());
-                fflush(log);
-                il2cpp_dump(game_data_dir); 
-                fprintf(log, "Status: Dump function execution finished.\n");
-            } else {
-                fprintf(log, "Status: Library NOT found in maps.\n");
-            }
-            fclose(log);
-        }
-    }
+
+void hack_prepare(const char *game_data_dir, void *data, size_t length) {
+    hack_start(game_data_dir);
 }
 
 static std::string GetNativeBridgeLibrary() {
