@@ -14,22 +14,44 @@
 #include <array>
 #include <chrono>
 
+// Вспомогательная функция для эмуляторов
+static std::string GetLibDir(JavaVM *vm) {
+    JNIEnv *env;
+    vm->GetEnv((void **) &env, JNI_VERSION_1_6);
+    auto activityThread = env->FindClass("android/app/ActivityThread");
+    auto currentActivityThread = env->GetStaticMethodID(activityThread, "currentActivityThread", "()Landroid/app/ActivityThread;");
+    auto at = env->CallStaticObjectMethod(activityThread, currentActivityThread);
+    auto getProcessName = env->GetMethodID(activityThread, "getProcessName", "()Ljava/lang/String;");
+    auto processName = (jstring) env->CallObjectMethod(at, getProcessName);
+    auto name = env->GetStringUTFChars(processName, nullptr);
+    std::string libDir = "/data/app/" + std::string(name) + "/lib/arm64";
+    env->ReleaseStringUTFChars(processName, name);
+    return libDir;
+}
+
 void hack_start(const char *game_data_dir) {
-    // Ждем, пока ты точно прогрузишься в лобби и закроешь все баннеры
+    bool load = false;
+    LOGI("Stealth monitoring active. Waiting for game decryption...");
+
+    // УЛУЧШЕНИЕ: Спим 15 секунд после прогрузки лобби
     sleep(15); 
-    
+
+    // Ищем библиотеку тщательно, но без лишнего шума
     void *handle = xdl_open("libil2cpp.so", XDL_DEFAULT);
     if (handle) {
+        LOGI("[+] Target decrypted in memory. Starting extraction...");
+        load = true;
+        
         il2cpp_api_init(handle);
-        // Дампим в загрузки, чтобы не мусорить в папке игры
+        // Дампим в загрузки, чтобы обойти защиту папки /data/data/
         il2cpp_dump("/sdcard/Download/"); 
+        
         xdl_close(handle);
         LOGI("SUCCESS: Check /sdcard/Download/ for dump.cs");
     }
-}
-    
+
     if (!load) {
-        LOGE("[!] Timeout: Game logic is too heavily protected or not Unity-based.");
+        LOGE("[!] Timeout: libil2cpp.so not found or protected.");
     }
 }
 
@@ -42,11 +64,8 @@ static std::string GetNativeBridgeLibrary() {
 struct NativeBridgeCallbacks {
     uint32_t version;
     void *initialize;
-
     void *(*loadLibrary)(const char *libpath, int flag);
-
     void *(*getTrampoline)(void *handle, const char *name, const char *shorty, uint32_t len);
-
     void *isSupported;
     void *getAppEnv;
     void *isCompatibleWith;
@@ -57,25 +76,10 @@ struct NativeBridgeCallbacks {
     void *initAnonymousNamespace;
     void *createNamespace;
     void *linkNamespaces;
-
     void *(*loadLibraryExt)(const char *libpath, int flag, void *ns);
 };
-static std::string GetLibDir(JavaVM *vm) {
-    JNIEnv *env;
-    vm->GetEnv((void **) &env, JNI_VERSION_1_6);
-    auto activityThread = env->FindClass("android/app/ActivityThread");
-    auto currentActivityThread = env->GetStaticMethodID(activityThread, "currentActivityThread", "()Landroid/app/ActivityThread;");
-    auto at = env->CallStaticObjectMethod(activityThread, currentActivityThread);
-    auto getProcessName = env->GetMethodID(activityThread, "getProcessName", "()Ljava/lang/String;");
-    auto processName = (jstring) env->CallObjectMethod(at, getProcessName);
-    auto name = env->GetStringUTFChars(processName, nullptr);
-    std::string libDir = "/data/app/" + std::string(name) + "/lib/arm64"; // или arm в зависимости от системы
-    env->ReleaseStringUTFChars(processName, name);
-    return libDir;
-}
+
 bool NativeBridgeLoad(const char *game_data_dir, int api_level, void *data, size_t length) {
-    // УЛУЧШЕНИЕ: Ждем инициализацию Houdini дольше. 
-    // В эмуляторах на Windows это часто узкое место.
     std::this_thread::sleep_for(std::chrono::seconds(7));
 
     auto libart = dlopen("libart.so", RTLD_NOW);
@@ -90,11 +94,6 @@ bool NativeBridgeLoad(const char *game_data_dir, int api_level, void *data, size
     auto lib_dir = GetLibDir(vms);
     
     if (lib_dir.empty()) return false;
-    if (lib_dir.find("/lib/x86") != std::string::npos) {
-        LOGI("Native x86 detected, bypassing bridge.");
-        munmap(data, length);
-        return false;
-    }
 
     auto nb = dlopen("libhoudini.so", RTLD_NOW);
     if (!nb) {
@@ -105,7 +104,6 @@ bool NativeBridgeLoad(const char *game_data_dir, int api_level, void *data, size
     if (nb) {
         auto callbacks = (NativeBridgeCallbacks *) dlsym(nb, "NativeBridgeItf");
         if (callbacks) {
-            // УЛУЧШЕНИЕ: Используем менее подозрительное имя для файлового дескриптора
             int fd = syscall(__NR_memfd_create, "system_buf", MFD_CLOEXEC);
             ftruncate(fd, (off_t) length);
             void *mem = mmap(nullptr, length, PROT_WRITE, MAP_SHARED, fd, 0);
@@ -138,24 +136,11 @@ bool NativeBridgeLoad(const char *game_data_dir, int api_level, void *data, size
 
 void hack_prepare(const char *game_data_dir, void *data, size_t length) {
     int api_level = android_get_device_api_level();
-    
-    // В эмуляторах x86 всегда пытаемся пробросить через Native Bridge
 #if defined(__i386__) || defined(__x86_64__)
     if (!NativeBridgeLoad(game_data_dir, api_level, data, length)) {
-        LOGW("NativeBridgeLoad failed, falling back to direct start.");
-#endif
         hack_start(game_data_dir);
-#if defined(__i386__) || defined(__x86_64__)
     }
+#else
+    hack_start(game_data_dir);
 #endif
 }
-
-#if defined(__arm__) || defined(__aarch64__)
-JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
-    auto game_data_dir = (const char *) reserved;
-    // Запускаем в отдельном потоке, чтобы не блокировать основной поток игры
-    std::thread hack_thread(hack_start, game_data_dir);
-    hack_thread.detach();
-    return JNI_VERSION_1_6;
-}
-#endif
