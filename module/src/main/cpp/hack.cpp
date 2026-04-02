@@ -35,58 +35,77 @@ static std::string GetLibDir(JavaVM *vm) {
 void hack_start(const char *game_data_dir) {
     if (game_data_dir == nullptr) return;
 
-    // Путь к логу в папке игры
+    // Открываем лог в режиме "w", чтобы перезаписать старый
     std::string log_path = std::string(game_data_dir) + "/module_log.txt";
     FILE *log = fopen(log_path.c_str(), "w");
     if (!log) return;
 
-    fprintf(log, "--- Lost Sword Memory Analysis ---\n");
+    fprintf(log, "--- Lost Sword Memory Analysis & Force Dump ---\n");
     fflush(log);
 
-    // Даем системе время (10 сек), чтобы NCGuard закончил первичную проверку
+    // Ждем 10 секунд после пробуждения потока (который сам спал 200 сек)
     std::this_thread::sleep_for(std::chrono::seconds(10));
 
-    uintptr_t base = 0;
+    // 1. Сначала сканируем карты памяти для отладки
     FILE *maps = fopen("/proc/self/maps", "r");
     if (maps) {
         char line[512];
         while (fgets(line, sizeof(line), maps)) {
-            // Пишем в лог все библиотеки (.so) — это помогло нам найти libunity
             if (strstr(line, ".so")) {
                 fprintf(log, "%s", line);
             }
-
-            // Ищем il2cpp или unity как запасной вариант
             if ((strstr(line, "libil2cpp") || strstr(line, "libunity")) && strstr(line, "r-xp")) {
                 uintptr_t temp_base = 0;
                 if (sscanf(line, "%" SCNxPTR, &temp_base) == 1) {
-                    if (base == 0) base = temp_base; // Берем первый найденный адрес
-                    fprintf(log, ">>> TARGET IDENTIFIED: %" PRIxPTR " <<<\n", temp_base);
+                    fprintf(log, ">>> TARGET IDENTIFIED IN MAPS: %" PRIxPTR " <<<\n", temp_base);
                 }
             }
         }
         fclose(maps);
-    } else {
-        fprintf(log, "ERROR: Cannot open /proc/self/maps\n");
     }
-
-    fprintf(log, "--- Scan Finished. Attempting Dump... ---\n");
     fflush(log);
-    
-    // Пытаемся найти библиотеку через линкер для инициализации API
-    // В Lost Sword она может быть скрыта, пробуем разные имена
+
+    fprintf(log, "\n--- Phase 2: Obtaining Library Handle ---\n");
+
+    // 2. Пробуем получить handle библиотеки разными способами
+    void *handle = nullptr;
     const char* targets[] = {"libil2cpp.so", "libgame.so", "libmain.so"};
-    for (const char* target : targets) {
-        void *handle = xdl_open(target, XDL_DEFAULT);
-        if (handle) {
-            fprintf(log, "SUCCESS: Found %s\n", target);
-            il2cpp_api_init(handle);
-            il2cpp_dump(game_data_dir);
-            xdl_close(handle);
-            break;
+
+    // Сначала пробуем системный dlopen (он иногда стабильнее в эмуляторах)
+    handle = dlopen("libil2cpp.so", RTLD_NOW);
+    if (handle) {
+        fprintf(log, "SUCCESS: Obtained handle via dlopen\n");
+    } else {
+        // Если не вышло, пробуем xdl_open для каждого имени
+        for (const char* target : targets) {
+            handle = xdl_open(target, XDL_DEFAULT);
+            if (handle) {
+                fprintf(log, "SUCCESS: Obtained handle for %s via xdl_open\n", target);
+                break;
+            }
         }
     }
-    
+
+    // 3. Если handle получен, запускаем инициализацию и дамп
+    if (handle) {
+        fprintf(log, "API Initialization starting...\n");
+        fflush(log);
+
+        il2cpp_api_init(handle);
+        
+        fprintf(log, "API Initialized. Starting il2cpp_dump (this may take 1-2 minutes)...\n");
+        fflush(log);
+
+        // Сам процесс дампа
+        il2cpp_dump(game_data_dir);
+
+        fprintf(log, "--- DUMP PROCESS FINISHED ---\n");
+        xdl_close(handle);
+    } else {
+        fprintf(log, "FATAL: Could not obtain libil2cpp handle by any method.\n");
+    }
+
+    fflush(log);
     fclose(log);
 }
 
