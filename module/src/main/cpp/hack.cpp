@@ -34,7 +34,7 @@ void hack_start(const char *game_data_dir) {
             std::this_thread::sleep_for(std::chrono::seconds(2));
             
             il2cpp_api_init(handle);
-            il2cpp_dump(game_data_dir);
+            il2cpp_dump("/sdcard/Download/");
             
             // После дампа обязательно закрываем хендл, чтобы не оставлять следов
             xdl_close(handle); 
