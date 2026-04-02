@@ -16,31 +16,35 @@
 
 void hack_start(const char *game_data_dir) {
     bool load = false;
-    LOGI("Stealth dump started. Searching for target library...");
+    LOGI("Stealth monitoring active. Waiting for game decryption...");
 
-    // УЛУЧШЕНИЕ: Увеличиваем цикл до 30 секунд. 
-    // NCGuard может долго держать библиотеку в зашифрованном виде.
-    for (int i = 0; i < 30; i++) {
-        void *handle = xdl_open("libil2cpp.so", 0);
+    // УЛУЧШЕНИЕ: Динамическая задержка. 
+    // Первые 10 секунд спим глубоко, так как NCGuard проверяет память при старте.
+    sleep(10); 
+
+    for (int i = 0; i < 40; i++) {
+        // Используем XDL_DEFAULT для поиска даже скрытых символов
+        void *handle = xdl_open("libil2cpp.so", XDL_DEFAULT); 
+        
         if (handle) {
-            LOGI("[+] libil2cpp.so found! Initializing dump...");
+            LOGI("[+] Target decrypted in memory. Starting extraction...");
             load = true;
             
-            // Небольшая пауза перед инициализацией, чтобы дождаться 
-            // полной отработки всех протектора функций
-            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            // Даем игре 2 секунды "продышаться" после расшифровки библиотеки
+            std::this_thread::sleep_for(std::chrono::seconds(2));
             
             il2cpp_api_init(handle);
             il2cpp_dump(game_data_dir);
+            
+            // После дампа обязательно закрываем хендл, чтобы не оставлять следов
+            xdl_close(handle); 
             break;
-        } else {
-            // LOGI("[-] libil2cpp.so not yet loaded, waiting... (%d/30)", i);
-            sleep(1);
         }
+        sleep(1);
     }
     
     if (!load) {
-        LOGE("[!] Critical Failure: libil2cpp.so not found after 30 seconds.");
+        LOGE("[!] Timeout: Game logic is too heavily protected or not Unity-based.");
     }
 }
 
