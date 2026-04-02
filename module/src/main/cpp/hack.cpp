@@ -15,33 +15,18 @@
 #include <chrono>
 
 void hack_start(const char *game_data_dir) {
-    bool load = false;
-    LOGI("Stealth monitoring active. Waiting for game decryption...");
-
-    // УЛУЧШЕНИЕ: Динамическая задержка. 
-    // Первые 10 секунд спим глубоко, так как NCGuard проверяет память при старте.
-    sleep(60); 
-
-    for (int i = 0; i < 40; i++) {
-        // Используем XDL_DEFAULT для поиска даже скрытых символов
-        void *handle = xdl_open("libil2cpp.so", XDL_DEFAULT); 
-        
-        if (handle) {
-            LOGI("[+] Target decrypted in memory. Starting extraction...");
-            load = true;
-            
-            // Даем игре 2 секунды "продышаться" после расшифровки библиотеки
-            std::this_thread::sleep_for(std::chrono::seconds(2));
-            
-            il2cpp_api_init(handle);
-            il2cpp_dump("/sdcard/Download/");
-            
-            // После дампа обязательно закрываем хендл, чтобы не оставлять следов
-            xdl_close(handle); 
-            break;
-        }
-        sleep(1);
+    // Ждем, пока ты точно прогрузишься в лобби и закроешь все баннеры
+    sleep(15); 
+    
+    void *handle = xdl_open("libil2cpp.so", XDL_DEFAULT);
+    if (handle) {
+        il2cpp_api_init(handle);
+        // Дампим в загрузки, чтобы не мусорить в папке игры
+        il2cpp_dump("/sdcard/Download/"); 
+        xdl_close(handle);
+        LOGI("SUCCESS: Check /sdcard/Download/ for dump.cs");
     }
+}
     
     if (!load) {
         LOGE("[!] Timeout: Game logic is too heavily protected or not Unity-based.");
