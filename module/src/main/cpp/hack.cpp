@@ -64,33 +64,50 @@ struct NativeBridgeCallbacks {
 void hack_start(const char *game_data_dir) {
     if (game_data_dir == nullptr) return;
 
-    std::string log_p = std::string(game_data_dir) + "/force_dump_log.txt";
+    std::string log_p = std::string(game_data_dir) + "/final_attempt.txt";
     FILE *log = fopen(log_p.c_str(), "w");
-    
-    // Этот адрес мы берем из твоего успешного brute_log.txt
-    uintptr_t target_addr = 0x76388bf45000; 
-    size_t dump_size = 15 * 1024 * 1024; // Нам хватит 15 МБ для таблиц
+    if (!log) return;
 
-    fprintf(log, "--- FORCING DUMP FROM HARDCODED ADDR ---\n");
-    fprintf(log, "Target Address: %" PRIxPTR "\n", target_addr);
+    fprintf(log, "--- Target: Hidden Anon Memory ---\n");
     fflush(log);
 
-    // Проверяем первые байты для интереса (что там сейчас вместо ELF)
-    unsigned char* check = (unsigned char*)target_addr;
-    fprintf(log, "First 4 bytes at addr: %02X %02X %02X %02X\n", check[0], check[1], check[2], check[3]);
+    FILE *maps = fopen("/proc/self/maps", "r");
+    if (maps) {
+        char line[512];
+        while (fgets(line, sizeof(line), maps)) {
+            // Ищем любые исполняемые (r-xp) или просто доступные на чтение (r--p) регионы
+            if (strstr(line, "r-xp") || strstr(line, "r--p")) {
+                uintptr_t start, end;
+                sscanf(line, "%" SCNxPTR "-%" SCNxPTR, &start, &end);
+                size_t size = end - start;
 
-    std::string out_path = std::string(game_data_dir) + "/libil2cpp_force.so";
-    FILE *out = fopen(out_path.c_str(), "wb");
-    if (out) {
-        // Пробуем записать 15 МБ «в тупую»
-        size_t written = fwrite((void*)target_addr, 1, dump_size, out);
-        fclose(out);
-        fprintf(log, "Wrote %zu bytes to libil2cpp_force.so\n", written);
-    } else {
-        fprintf(log, "ERROR: Could not create output file\n");
+                // Ищем регион, похожий на нашу библиотеку (от 80 до 100 МБ)
+                if (size > 80 * 1024 * 1024 && size < 110 * 1024 * 1024) {
+                    fprintf(log, "Checking region: %s", line);
+                    
+                    // Проверяем на заголовок ELF
+                    unsigned char* ptr = (unsigned char*)start;
+                    if (ptr[0] == 0x7F && ptr[1] == 'E' && ptr[2] == 'L' && ptr[3] == 'F') {
+                        fprintf(log, "!!! FOUND HIDDEN LIB AT: %" PRIxPTR " !!!\n", start);
+                        
+                        std::string out_path = std::string(game_data_dir) + "/libil2cpp_found.so";
+                        FILE *out = fopen(out_path.c_str(), "wb");
+                        if (out) {
+                            // Сохраняем 20 МБ (хватит для таблиц)
+                            fwrite((void*)start, 1, 20 * 1024 * 1024, out);
+                            fclose(out);
+                            fprintf(log, "SUCCESS: File saved!\n");
+                            fclose(maps);
+                            fclose(log);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+        fclose(maps);
     }
-
-    fprintf(log, "--- Force Dump Finished ---\n");
+    fprintf(log, "--- Library not found in this session ---\n");
     fclose(log);
 }
 
