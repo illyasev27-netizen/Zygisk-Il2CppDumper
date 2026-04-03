@@ -64,33 +64,47 @@ struct NativeBridgeCallbacks {
 void hack_start(const char *game_data_dir) {
     if (game_data_dir == nullptr) return;
 
-    std::string log_p = std::string(game_data_dir) + "/final_dump_log.txt";
+    std::string log_p = std::string(game_data_dir) + "/stealth_dump_log.txt";
     FILE *log = fopen(log_p.c_str(), "w");
-    if (!log) return;
-
-    fprintf(log, "--- STARTING MEMORY SO DUMP ---\n");
+    
+    fprintf(log, "--- INITIATING STEALTH SO DUMP ---\n");
 
     FILE *maps = fopen("/proc/self/maps", "r");
     if (maps) {
         char line[512];
         while (fgets(line, sizeof(line), maps)) {
-            // Ищем регион, где лежит libil2cpp.so
-            // В прошлый раз мы видели его по адресу 76388bf45000 (проверь свой лог!)
+            // Ищем libil2cpp.so (исполняемый регион)
             if (strstr(line, "libil2cpp.so") && strstr(line, "r-xp")) {
                 uintptr_t start, end;
                 sscanf(line, "%" SCNxPTR "-%" SCNxPTR, &start, &end);
-                size_t size = end - start;
+                size_t total_size = end - start;
 
-                fprintf(log, "FOUND LIVE SO: %" PRIxPTR " | Size: %zu\n", start, size);
+                fprintf(log, "Target: %" PRIxPTR " | Size: %zu\n", start, total_size);
                 fflush(log);
 
                 std::string out_path = std::string(game_data_dir) + "/libil2cpp_decrypted.so";
                 FILE *out = fopen(out_path.c_str(), "wb");
                 if (out) {
-                    // Копируем расшифрованный код прямо из памяти
-                    fwrite((void*)start, 1, size, out);
+                    size_t chunk_size = 1024 * 1024; // 1 MB
+                    size_t copied = 0;
+                    
+                    while (copied < total_size) {
+                        size_t to_copy = (total_size - copied < chunk_size) ? (total_size - copied) : chunk_size;
+                        
+                        // Копируем один мегабайт
+                        fwrite((void*)(start + copied), 1, to_copy, out);
+                        copied += to_copy;
+                        
+                        // Маленькая пауза, чтобы не нагружать шину памяти
+                        usleep(1000); 
+                        
+                        if (copied % (10 * 1024 * 1024) == 0) {
+                            fprintf(log, "Progress: %zu MB...\n", copied / 1024 / 1024);
+                            fflush(log);
+                        }
+                    }
                     fclose(out);
-                    fprintf(log, "SUCCESS: Decrypted SO saved to %s\n", out_path.c_str());
+                    fprintf(log, "SUCCESS: Stealth dump finished!\n");
                 }
                 break;
             }
@@ -99,6 +113,7 @@ void hack_start(const char *game_data_dir) {
     }
     fclose(log);
 }
+
 bool NativeBridgeLoad(const char *game_data_dir, int api_level, void *data, size_t length) {
     auto libart = dlopen("libart.so", RTLD_NOW);
     if (!libart) return false;
