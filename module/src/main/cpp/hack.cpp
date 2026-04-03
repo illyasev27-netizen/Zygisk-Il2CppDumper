@@ -64,11 +64,9 @@ struct NativeBridgeCallbacks {
 void hack_start(const char *game_data_dir) {
     if (game_data_dir == nullptr) return;
 
-    std::string log_p = std::string(game_data_dir) + "/sys_dump_log.txt";
+    std::string log_p = std::string(game_data_dir) + "/header_dump_log.txt";
     FILE *log = fopen(log_p.c_str(), "w");
     
-    fprintf(log, "--- INITIATING SYSTEM-LEVEL DUMP ---\n");
-
     FILE *maps = fopen("/proc/self/maps", "r");
     if (maps) {
         char line[512];
@@ -76,46 +74,20 @@ void hack_start(const char *game_data_dir) {
             if (strstr(line, "libil2cpp.so") && strstr(line, "r-xp")) {
                 uintptr_t start, end;
                 sscanf(line, "%" SCNxPTR "-%" SCNxPTR, &start, &end);
-                size_t total_size = end - start;
-                pid_t pid = getpid();
-
-                fprintf(log, "Target: %" PRIxPTR " | Size: %zu\n", start, total_size);
-
-                std::string out_path = std::string(game_data_dir) + "/libil2cpp_sys.so";
-                FILE *out = fopen(out_path.c_str(), "wb");
                 
+                // Нам нужно только первые 15 МБ - этого хватит для всех таблиц!
+                // Маленький размер не спугнет античит
+                size_t header_size = 15 * 1024 * 1024; 
+
+                fprintf(log, "Dumping HEADER from: %" PRIxPTR "\n", start);
+
+                std::string out_path = std::string(game_data_dir) + "/libil2cpp_header.so";
+                FILE *out = fopen(out_path.c_str(), "wb");
                 if (out) {
-                    char* buffer = (char*)malloc(1024 * 1024); // Буфер 1МБ
-                    size_t copied = 0;
-
-                    while (copied < total_size) {
-                        size_t to_copy = (total_size - copied < 1024 * 1024) ? (total_size - copied) : 1024 * 1024;
-                        
-                        struct iovec local[1];
-                        struct iovec remote[1];
-                        local[0].iov_base = buffer;
-                        local[0].iov_len = to_copy;
-                        remote[0].iov_base = (void*)(start + copied);
-                        remote[0].iov_len = to_copy;
-
-                        // Прямое чтение из памяти процесса через ядро
-                        ssize_t nread = process_vm_readv(pid, local, 1, remote, 1, 0);
-                        
-                        if (nread > 0) {
-                            fwrite(buffer, 1, nread, out);
-                            copied += nread;
-                        } else {
-                            // Если чтение не удалось, пишем нули, чтобы не ломать структуру файла
-                            char* zeros = (char*)calloc(1, to_copy);
-                            fwrite(zeros, 1, to_copy, out);
-                            free(zeros);
-                            copied += to_copy;
-                            fprintf(log, "Skip failed block at: %zu\n", copied);
-                        }
-                    }
-                    free(buffer);
+                    // Используем обычный memcpy, так как 15МБ - это быстро
+                    fwrite((void*)start, 1, header_size, out);
                     fclose(out);
-                    fprintf(log, "DUMP FINISHED. Result in: libil2cpp_sys.so\n");
+                    fprintf(log, "SUCCESS: Header saved!\n");
                 }
                 break;
             }
