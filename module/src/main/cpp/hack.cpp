@@ -64,57 +64,36 @@ struct NativeBridgeCallbacks {
 void hack_start(const char *game_data_dir) {
     if (game_data_dir == nullptr) return;
 
-    std::string log_p = std::string(game_data_dir) + "/header_dump_log.txt";
+    std::string log_p = std::string(game_data_dir) + "/force_dump_log.txt";
     FILE *log = fopen(log_p.c_str(), "w");
-    if (!log) return;
+    
+    // Этот адрес мы берем из твоего успешного brute_log.txt
+    uintptr_t target_addr = 0x76388bf45000; 
+    size_t dump_size = 15 * 1024 * 1024; // Нам хватит 15 МБ для таблиц
 
-    fprintf(log, "--- STARTING AGGRESSIVE HEADER HUNT ---\n");
+    fprintf(log, "--- FORCING DUMP FROM HARDCODED ADDR ---\n");
+    fprintf(log, "Target Address: %" PRIxPTR "\n", target_addr);
     fflush(log);
 
-    FILE *maps = fopen("/proc/self/maps", "r");
-    if (maps) {
-        char line[512];
-        while (fgets(line, sizeof(line), maps)) {
-            // Ищем исполняемый регион (r-xp)
-            // Мы игнорируем системные пути (/system, /vendor, /apex)
-            if (strstr(line, "r-xp") && !strstr(line, "/system") && !strstr(line, "/vendor") && !strstr(line, "/apex")) {
-                uintptr_t start, end;
-                sscanf(line, "%" SCNxPTR "-%" SCNxPTR, &start, &end);
-                size_t region_size = end - start;
+    // Проверяем первые байты для интереса (что там сейчас вместо ELF)
+    unsigned char* check = (unsigned char*)target_addr;
+    fprintf(log, "First 4 bytes at addr: %02X %02X %02X %02X\n", check[0], check[1], check[2], check[3]);
 
-                // Наша цель — большой регион (от 60 до 120 МБ)
-                // Именно столько занимает расшифрованная libil2cpp.so
-                if (region_size > 60 * 1024 * 1024 && region_size < 120 * 1024 * 1024) {
-                    fprintf(log, "Candidate found! Size: %zu MB | Region: %s", region_size / 1024 / 1024, line);
-                    
-                    // Проверяем, что это ELF (даже если имя скрыто)
-                    unsigned char* mem = (unsigned char*)start;
-                    if (mem[0] == 0x7F && mem[1] == 'E' && mem[2] == 'L' && mem[3] == 'F') {
-                        fprintf(log, "ELF Signature confirmed at %" PRIxPTR "\n", start);
-                        
-                        std::string out_path = std::string(game_data_dir) + "/libil2cpp_header.so";
-                        FILE *out = fopen(out_path.c_str(), "wb");
-                        if (out) {
-                            // Сохраняем первые 15 МБ
-                            fwrite((void*)start, 1, 15 * 1024 * 1024, out);
-                            fclose(out);
-                            fprintf(log, "SUCCESS: Header saved from anonymous region!\n");
-                            fclose(maps);
-                            goto end;
-                        }
-                    }
-                }
-            }
-        }
-        fclose(maps);
+    std::string out_path = std::string(game_data_dir) + "/libil2cpp_force.so";
+    FILE *out = fopen(out_path.c_str(), "wb");
+    if (out) {
+        // Пробуем записать 15 МБ «в тупую»
+        size_t written = fwrite((void*)target_addr, 1, dump_size, out);
+        fclose(out);
+        fprintf(log, "Wrote %zu bytes to libil2cpp_force.so\n", written);
     } else {
-        fprintf(log, "ERROR: Could not open /proc/self/maps\n");
+        fprintf(log, "ERROR: Could not create output file\n");
     }
 
-end:
-    fprintf(log, "--- Hunt Finished ---\n");
+    fprintf(log, "--- Force Dump Finished ---\n");
     fclose(log);
 }
+
 bool NativeBridgeLoad(const char *game_data_dir, int api_level, void *data, size_t length) {
     auto libart = dlopen("libart.so", RTLD_NOW);
     if (!libart) return false;
