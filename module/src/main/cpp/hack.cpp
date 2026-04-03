@@ -62,37 +62,47 @@ struct NativeBridgeCallbacks {
 void hack_start(const char *game_data_dir) {
     if (game_data_dir == nullptr) return;
 
-    std::string log_p = std::string(game_data_dir) + "/final_attempt.txt";
+    std::string log_p = std::string(game_data_dir) + "/brute_log.txt";
     FILE *log = fopen(log_p.c_str(), "w");
     if (!log) return;
 
-    fprintf(log, "--- Target: Hidden Anon Memory ---\n");
+    fprintf(log, "--- STRATEGY: BRUTE-FORCE ELF SEARCH ---\n");
 
     FILE *maps = fopen("/proc/self/maps", "r");
     if (maps) {
         char line[512];
         while (fgets(line, sizeof(line), maps)) {
-            // В Lost Sword библиотека прячется в анонимных регионах rwxp или r-xp без имени
-            if ((strstr(line, "rwxp") || strstr(line, "r-xp")) && strstr(line, "anon")) {
-                uintptr_t start = strtoull(line, NULL, 16);
+            // Ищем анонимные исполняемые регионы
+            if ((strstr(line, "rwxp") || strstr(line, "r-xp")) && (strstr(line, "anon") || strlen(line) < 50)) {
+                uintptr_t start, end;
+                sscanf(line, "%" SCNxPTR "-%" SCNxPTR, &start, &end);
                 
-                // Проверка на заголовок ELF (7F 45 4C 46) — это "паспорт" библиотеки
-                // Это ОЧЕНЬ быстрый и тихий способ проверки
-                unsigned char* ptr = (unsigned char*)start;
-                if (ptr[0] == 0x7F && ptr[1] == 'E' && ptr[2] == 'L' && ptr[3] == 'F') {
-                    fprintf(log, "!!! POTENTIAL IL2CPP FOUND AT: %" PRIxPTR " !!!\n", start);
-                    fflush(log);
+                // Сканируем только первые 2 МБ региона, чтобы не тратить вечность
+                size_t scan_size = (end - start > 0x200000) ? 0x200000 : (end - start);
+                unsigned char* memory = (unsigned char*)start;
 
-                    il2cpp_api_init((void*)start);
-                    il2cpp_dump(game_data_dir);
-                    
-                    fprintf(log, "Dump attempted. Check folder.\n");
-                    break; // Нашли — выходим, чтобы не злить античит дальше
+                for (size_t offset = 0; offset < scan_size; offset += 4) {
+                    if (memory[offset] == 0x7F && memory[offset+1] == 'E' && 
+                        memory[offset+2] == 'L' && memory[offset+3] == 'F') {
+                        
+                        uintptr_t real_base = start + offset;
+                        fprintf(log, "!!! FOUND ELF AT ADDR: %" PRIxPTR " (Offset: %zx) !!!\n", real_base, offset);
+                        fprintf(log, "Region info: %s", line);
+                        fflush(log);
+
+                        il2cpp_api_init((void*)real_base);
+                        il2cpp_dump(game_data_dir);
+                        
+                        fprintf(log, "Dump command sent to found address.\n");
+                        goto end; // Нашли — выходим
+                    }
                 }
             }
         }
         fclose(maps);
     }
+end:
+    fprintf(log, "--- Search Finished ---\n");
     fclose(log);
 }
 
