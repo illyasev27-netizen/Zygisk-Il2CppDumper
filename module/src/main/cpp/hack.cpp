@@ -64,48 +64,39 @@ struct NativeBridgeCallbacks {
 void hack_start(const char *game_data_dir) {
     if (game_data_dir == nullptr) return;
 
-    std::string log_p = std::string(game_data_dir) + "/meta_hunt_log.txt";
+    std::string log_p = std::string(game_data_dir) + "/final_dump_log.txt";
     FILE *log = fopen(log_p.c_str(), "w");
     if (!log) return;
 
-    fprintf(log, "--- SEARCHING FOR METADATA MAGIC ---\n");
-    fflush(log);
+    fprintf(log, "--- STARTING MEMORY SO DUMP ---\n");
 
     FILE *maps = fopen("/proc/self/maps", "r");
     if (maps) {
         char line[512];
         while (fgets(line, sizeof(line), maps)) {
-            // Метаданные обычно лежат в регионах r--p (только чтение) или rw-p
-            if (strstr(line, "r--p") || strstr(line, "rw-p")) {
+            // Ищем регион, где лежит libil2cpp.so
+            // В прошлый раз мы видели его по адресу 76388bf45000 (проверь свой лог!)
+            if (strstr(line, "libil2cpp.so") && strstr(line, "r-xp")) {
                 uintptr_t start, end;
                 sscanf(line, "%" SCNxPTR "-%" SCNxPTR, &start, &end);
-                
-                // Проверяем только начало регионов, так как файл метаданных 
-                // всегда начинается с магического числа
-                unsigned char* memory = (unsigned char*)start;
-                
-                // Нам нужно проверить доступность памяти, чтобы не вылететь
-                // Сигнатура: AF 1B B1 FA
-                if (memory[0] == 0xAF && memory[1] == 0x1B && memory[2] == 0xB1 && memory[3] == 0xFA) {
-                    size_t size = end - start;
-                    fprintf(log, "!!! METADATA FOUND !!!\nAddr: %" PRIxPTR "\nSize: %zu bytes\nRegion: %s", start, size, line);
-                    fflush(log);
+                size_t size = end - start;
 
-                    // Копируем метаданные в файл
-                    std::string out_path = std::string(game_data_dir) + "/global-metadata.dat";
-                    FILE *out = fopen(out_path.c_str(), "wb");
-                    if (out) {
-                        fwrite(memory, 1, size, out);
-                        fclose(out);
-                        fprintf(log, "SUCCESS: global-metadata.dat saved!\n");
-                    }
-                    break; 
+                fprintf(log, "FOUND LIVE SO: %" PRIxPTR " | Size: %zu\n", start, size);
+                fflush(log);
+
+                std::string out_path = std::string(game_data_dir) + "/libil2cpp_decrypted.so";
+                FILE *out = fopen(out_path.c_str(), "wb");
+                if (out) {
+                    // Копируем расшифрованный код прямо из памяти
+                    fwrite((void*)start, 1, size, out);
+                    fclose(out);
+                    fprintf(log, "SUCCESS: Decrypted SO saved to %s\n", out_path.c_str());
                 }
+                break;
             }
         }
         fclose(maps);
     }
-    fprintf(log, "--- Hunt Finished ---\n");
     fclose(log);
 }
 bool NativeBridgeLoad(const char *game_data_dir, int api_level, void *data, size_t length) {
