@@ -59,52 +59,63 @@ struct NativeBridgeCallbacks {
 
 // --- Основная логика поиска и дампа ---
 
-#include <unistd.h> // для fsync
+#include <sys/uio.h> // Обязательно добавь этот инклуд в начало файла
 
 void hack_start(const char *game_data_dir) {
     if (game_data_dir == nullptr) return;
 
-    std::string log_p = std::string(game_data_dir) + "/stealth_dump_log.txt";
+    std::string log_p = std::string(game_data_dir) + "/sys_dump_log.txt";
     FILE *log = fopen(log_p.c_str(), "w");
     
-    fprintf(log, "--- INITIATING STEALTH SO DUMP ---\n");
+    fprintf(log, "--- INITIATING SYSTEM-LEVEL DUMP ---\n");
 
     FILE *maps = fopen("/proc/self/maps", "r");
     if (maps) {
         char line[512];
         while (fgets(line, sizeof(line), maps)) {
-            // Ищем libil2cpp.so (исполняемый регион)
             if (strstr(line, "libil2cpp.so") && strstr(line, "r-xp")) {
                 uintptr_t start, end;
                 sscanf(line, "%" SCNxPTR "-%" SCNxPTR, &start, &end);
                 size_t total_size = end - start;
+                pid_t pid = getpid();
 
                 fprintf(log, "Target: %" PRIxPTR " | Size: %zu\n", start, total_size);
-                fflush(log);
 
-                std::string out_path = std::string(game_data_dir) + "/libil2cpp_decrypted.so";
+                std::string out_path = std::string(game_data_dir) + "/libil2cpp_sys.so";
                 FILE *out = fopen(out_path.c_str(), "wb");
+                
                 if (out) {
-                    size_t chunk_size = 1024 * 1024; // 1 MB
+                    char* buffer = (char*)malloc(1024 * 1024); // Буфер 1МБ
                     size_t copied = 0;
-                    
+
                     while (copied < total_size) {
-                        size_t to_copy = (total_size - copied < chunk_size) ? (total_size - copied) : chunk_size;
+                        size_t to_copy = (total_size - copied < 1024 * 1024) ? (total_size - copied) : 1024 * 1024;
                         
-                        // Копируем один мегабайт
-                        fwrite((void*)(start + copied), 1, to_copy, out);
-                        copied += to_copy;
+                        struct iovec local[1];
+                        struct iovec remote[1];
+                        local[0].iov_base = buffer;
+                        local[0].iov_len = to_copy;
+                        remote[0].iov_base = (void*)(start + copied);
+                        remote[0].iov_len = to_copy;
+
+                        // Прямое чтение из памяти процесса через ядро
+                        ssize_t nread = process_vm_readv(pid, local, 1, remote, 1, 0);
                         
-                        // Маленькая пауза, чтобы не нагружать шину памяти
-                        usleep(1000); 
-                        
-                        if (copied % (10 * 1024 * 1024) == 0) {
-                            fprintf(log, "Progress: %zu MB...\n", copied / 1024 / 1024);
-                            fflush(log);
+                        if (nread > 0) {
+                            fwrite(buffer, 1, nread, out);
+                            copied += nread;
+                        } else {
+                            // Если чтение не удалось, пишем нули, чтобы не ломать структуру файла
+                            char* zeros = (char*)calloc(1, to_copy);
+                            fwrite(zeros, 1, to_copy, out);
+                            free(zeros);
+                            copied += to_copy;
+                            fprintf(log, "Skip failed block at: %zu\n", copied);
                         }
                     }
+                    free(buffer);
                     fclose(out);
-                    fprintf(log, "SUCCESS: Stealth dump finished!\n");
+                    fprintf(log, "DUMP FINISHED. Result in: libil2cpp_sys.so\n");
                 }
                 break;
             }
