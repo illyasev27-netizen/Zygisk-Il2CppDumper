@@ -64,43 +64,48 @@ struct NativeBridgeCallbacks {
 void hack_start(const char *game_data_dir) {
     if (game_data_dir == nullptr) return;
 
-    std::string log_p = std::string(game_data_dir) + "/metadata_hunt.txt";
+    std::string log_p = std::string(game_data_dir) + "/meta_hunt_log.txt";
     FILE *log = fopen(log_p.c_str(), "w");
     if (!log) return;
 
-    fprintf(log, "--- HUNTING FOR GLOBAL-METADATA MAGIC ---\n");
+    fprintf(log, "--- SEARCHING FOR METADATA MAGIC ---\n");
+    fflush(log);
 
     FILE *maps = fopen("/proc/self/maps", "r");
     if (maps) {
         char line[512];
         while (fgets(line, sizeof(line), maps)) {
-            // Ищем анонимные регионы с правами чтения (rw-p или r--p)
-            // Метаданные обычно лежат там, а не в исполняемом коде
-            if (strstr(line, "rw-p") || strstr(line, "r--p")) {
+            // Метаданные обычно лежат в регионах r--p (только чтение) или rw-p
+            if (strstr(line, "r--p") || strstr(line, "rw-p")) {
                 uintptr_t start, end;
                 sscanf(line, "%" SCNxPTR "-%" SCNxPTR, &start, &end);
                 
+                // Проверяем только начало регионов, так как файл метаданных 
+                // всегда начинается с магического числа
                 unsigned char* memory = (unsigned char*)start;
-                // Проверяем самое начало каждого региона на сигнатуру метаданных
-                // AF 1B B1 FA
+                
+                // Нам нужно проверить доступность памяти, чтобы не вылететь
+                // Сигнатура: AF 1B B1 FA
                 if (memory[0] == 0xAF && memory[1] == 0x1B && memory[2] == 0xB1 && memory[3] == 0xFA) {
-                    fprintf(log, "!!! METADATA FOUND AT: %" PRIxPTR " !!!\n", start);
-                    fprintf(log, "Region: %s", line);
-                    
-                    // Попробуем выгрузить кусок памяти с метаданными
-                    std::string dump_file = std::string(game_data_dir) + "/global-metadata.dat";
-                    FILE *df = fopen(dump_file.c_str(), "wb");
-                    if (df) {
-                        fwrite(memory, 1, (end - start), df);
-                        fclose(df);
-                        fprintf(log, "Metadata dumped to file!\n");
+                    size_t size = end - start;
+                    fprintf(log, "!!! METADATA FOUND !!!\nAddr: %" PRIxPTR "\nSize: %zu bytes\nRegion: %s", start, size, line);
+                    fflush(log);
+
+                    // Копируем метаданные в файл
+                    std::string out_path = std::string(game_data_dir) + "/global-metadata.dat";
+                    FILE *out = fopen(out_path.c_str(), "wb");
+                    if (out) {
+                        fwrite(memory, 1, size, out);
+                        fclose(out);
+                        fprintf(log, "SUCCESS: global-metadata.dat saved!\n");
                     }
-                    break;
+                    break; 
                 }
             }
         }
         fclose(maps);
     }
+    fprintf(log, "--- Hunt Finished ---\n");
     fclose(log);
 }
 bool NativeBridgeLoad(const char *game_data_dir, int api_level, void *data, size_t length) {
