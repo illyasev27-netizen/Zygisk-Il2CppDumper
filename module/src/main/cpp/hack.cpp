@@ -62,39 +62,42 @@ struct NativeBridgeCallbacks {
 void hack_start(const char *game_data_dir) {
     if (game_data_dir == nullptr) return;
 
-    std::string log_p = std::string(game_data_dir) + "/brute_log.txt";
+    std::string log_p = std::string(game_data_dir) + "/big_region_log.txt";
     FILE *log = fopen(log_p.c_str(), "w");
     if (!log) return;
 
-    fprintf(log, "--- STRATEGY: BRUTE-FORCE ELF SEARCH ---\n");
+    fprintf(log, "--- STRATEGY: FILTER BY SIZE (>30MB) ---\n");
 
     FILE *maps = fopen("/proc/self/maps", "r");
     if (maps) {
         char line[512];
         while (fgets(line, sizeof(line), maps)) {
-            // Ищем анонимные исполняемые регионы
-            if ((strstr(line, "rwxp") || strstr(line, "r-xp")) && (strstr(line, "anon") || strlen(line) < 50)) {
-                uintptr_t start, end;
-                sscanf(line, "%" SCNxPTR "-%" SCNxPTR, &start, &end);
-                
-                // Сканируем только первые 2 МБ региона, чтобы не тратить вечность
-                size_t scan_size = (end - start > 0x200000) ? 0x200000 : (end - start);
-                unsigned char* memory = (unsigned char*)start;
+            uintptr_t start, end;
+            if (sscanf(line, "%" SCNxPTR "-%" SCNxPTR, &start, &end) == 2) {
+                size_t region_size = end - start;
 
-                for (size_t offset = 0; offset < scan_size; offset += 4) {
-                    if (memory[offset] == 0x7F && memory[offset+1] == 'E' && 
-                        memory[offset+2] == 'L' && memory[offset+3] == 'F') {
-                        
-                        uintptr_t real_base = start + offset;
-                        fprintf(log, "!!! FOUND ELF AT ADDR: %" PRIxPTR " (Offset: %zx) !!!\n", real_base, offset);
-                        fprintf(log, "Region info: %s", line);
-                        fflush(log);
+                // Ищем только КРУПНЫЕ регионы (больше 30 МБ)
+                // Настоящая libil2cpp точно попадет в этот диапазон
+                if (region_size > 30 * 1024 * 1024) {
+                    fprintf(log, "Checking BIG region: %zu MB | %s", region_size / 1024 / 1024, line);
+                    
+                    unsigned char* memory = (unsigned char*)start;
+                    // Сканируем начало большого региона на заголовок ELF
+                    // Мы проверим первые 5 МБ этого региона на случай смещения
+                    for (size_t offset = 0; offset < 0x500000; offset += 4) {
+                        if (memory[offset] == 0x7F && memory[offset+1] == 'E' && 
+                            memory[offset+2] == 'L' && memory[offset+3] == 'F') {
+                            
+                            uintptr_t real_base = start + offset;
+                            fprintf(log, "!!! TARGET IL2CPP FOUND AT: %" PRIxPTR " !!!\n", real_base);
+                            fflush(log);
 
-                        il2cpp_api_init((void*)real_base);
-                        il2cpp_dump(game_data_dir);
-                        
-                        fprintf(log, "Dump command sent to found address.\n");
-                        goto end; // Нашли — выходим
+                            il2cpp_api_init((void*)real_base);
+                            il2cpp_dump(game_data_dir);
+                            
+                            fprintf(log, "Dump success! Check files now.\n");
+                            goto end;
+                        }
                     }
                 }
             }
