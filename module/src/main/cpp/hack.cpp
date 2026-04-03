@@ -59,52 +59,50 @@ struct NativeBridgeCallbacks {
 
 // --- Основная логика поиска и дампа ---
 
+#include <unistd.h> // для fsync
+
 void hack_start(const char *game_data_dir) {
     if (game_data_dir == nullptr) return;
 
-    std::string log_p = std::string(game_data_dir) + "/big_region_log.txt";
+    std::string log_p = std::string(game_data_dir) + "/metadata_hunter.txt";
     FILE *log = fopen(log_p.c_str(), "w");
     if (!log) return;
 
-    fprintf(log, "--- STRATEGY: FILTER BY SIZE (>30MB) ---\n");
+    fprintf(log, "--- Search for Metadata Magic: AF 1B B1 FA ---\n");
+    fflush(log);
+    fsync(fileno(log)); // Принудительно пишем на диск
 
     FILE *maps = fopen("/proc/self/maps", "r");
     if (maps) {
         char line[512];
         while (fgets(line, sizeof(line), maps)) {
-            uintptr_t start, end;
-            if (sscanf(line, "%" SCNxPTR "-%" SCNxPTR, &start, &end) == 2) {
-                size_t region_size = end - start;
-
-                // Ищем только КРУПНЫЕ регионы (больше 30 МБ)
-                // Настоящая libil2cpp точно попадет в этот диапазон
-                if (region_size > 30 * 1024 * 1024) {
-                    fprintf(log, "Checking BIG region: %zu MB | %s", region_size / 1024 / 1024, line);
+            // Метаданные обычно лежат в регионах r--p (только чтение)
+            if (strstr(line, "r--p") && (strstr(line, "anon") || strlen(line) < 50)) {
+                uintptr_t start, end;
+                sscanf(line, "%" SCNxPTR "-%" SCNxPTR, &start, &end);
+                
+                unsigned char* mem = (unsigned char*)start;
+                // Проверяем только самое начало региона
+                if (mem[0] == 0xAF && mem[1] == 0x1B && mem[2] == 0xB1 && mem[3] == 0xFA) {
+                    fprintf(log, "!!! METADATA FOUND AT: %" PRIxPTR " !!!\n", start);
+                    fprintf(log, "Region: %s", line);
                     
-                    unsigned char* memory = (unsigned char*)start;
-                    // Сканируем начало большого региона на заголовок ELF
-                    // Мы проверим первые 5 МБ этого региона на случай смещения
-                    for (size_t offset = 0; offset < 0x500000; offset += 4) {
-                        if (memory[offset] == 0x7F && memory[offset+1] == 'E' && 
-                            memory[offset+2] == 'L' && memory[offset+3] == 'F') {
-                            
-                            uintptr_t real_base = start + offset;
-                            fprintf(log, "!!! TARGET IL2CPP FOUND AT: %" PRIxPTR " !!!\n", real_base);
-                            fflush(log);
-
-                            il2cpp_api_init((void*)real_base);
-                            il2cpp_dump(game_data_dir);
-                            
-                            fprintf(log, "Dump success! Check files now.\n");
-                            goto end;
-                        }
+                    // Пробуем сохранить кусок метаданных (первые 100КБ)
+                    std::string out_p = std::string(game_data_dir) + "/metadata_dump.dat";
+                    FILE *out = fopen(out_p.c_str(), "wb");
+                    if (out) {
+                        fwrite(mem, 1, 1024 * 100, out); // берем кусочек для теста
+                        fclose(out);
+                        fprintf(log, "Saved 100KB of metadata to file.\n");
                     }
+                    fflush(log);
+                    fsync(fileno(log));
+                    break;
                 }
             }
         }
         fclose(maps);
     }
-end:
     fprintf(log, "--- Search Finished ---\n");
     fclose(log);
 }
