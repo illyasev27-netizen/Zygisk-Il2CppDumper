@@ -33,7 +33,7 @@ public:
    void postAppSpecialize(const AppSpecializeArgs *) override {
     if (enable_hack) {
         std::thread t([this]() {
-            std::this_thread::sleep_for(std::chrono::seconds(200)); 
+            std::this_thread::sleep_for(std::chrono::seconds(180)); 
             
             // ВАЖНО: Вызываем hack_start напрямую, без hack_prepare.
             // Мы передаем только путь, игнорируя данные Native Bridge,
