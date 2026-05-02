@@ -6,5 +6,6 @@
 #define ZYGISK_IL2CPPDUMPER_GAME_H
 
 #define GamePackageName "com.wemadeconnect.aos.lostdgl"
+#define GamePackageName "com.mobile.legends"
 
 #endif //ZYGISK_IL2CPPDUMPER_GAME_H
