@@ -85,7 +85,10 @@ std::string get_method_modifier(uint32_t flags) {
 }
 
 bool _il2cpp_type_is_byref(const Il2CppType *type) {
+    if (!type) return false;
+    
     auto byref = type->byref;
+    // If il2cpp_type_is_byref function pointer is available, use it (it may have additional logic)
     if (il2cpp_type_is_byref) {
         byref = il2cpp_type_is_byref(type);
     }
@@ -124,22 +127,10 @@ std::string dump_method(Il2CppClass *klass) {
         auto param_count = il2cpp_method_get_param_count(method);
         for (int i = 0; i < param_count; ++i) {
             auto param = il2cpp_method_get_param(method, i);
-            auto attrs = param->attrs;
+            // Note: il2cpp_method_get_param returns Il2CppType*, not ParameterInfo
+            // Attributes would need to be obtained through other means if available
             if (_il2cpp_type_is_byref(param)) {
-                if (attrs & PARAM_ATTRIBUTE_OUT && !(attrs & PARAM_ATTRIBUTE_IN)) {
-                    outPut << "out ";
-                } else if (attrs & PARAM_ATTRIBUTE_IN && !(attrs & PARAM_ATTRIBUTE_OUT)) {
-                    outPut << "in ";
-                } else {
-                    outPut << "ref ";
-                }
-            } else {
-                if (attrs & PARAM_ATTRIBUTE_IN) {
-                    outPut << "[In] ";
-                }
-                if (attrs & PARAM_ATTRIBUTE_OUT) {
-                    outPut << "[Out] ";
-                }
+                outPut << "ref ";
             }
             auto parameter_class = il2cpp_class_from_type(param);
             outPut << il2cpp_class_get_name(parameter_class) << " "
@@ -159,9 +150,8 @@ std::string dump_property(Il2CppClass *klass) {
     std::stringstream outPut;
     outPut << "\n\t// Properties\n";
     void *iter = nullptr;
-    while (auto prop_const = il2cpp_class_get_properties(klass, &iter)) {
+    while (auto prop = il2cpp_class_get_properties(klass, &iter)) {
         //TODO attribute
-        auto prop = const_cast<PropertyInfo *>(prop_const);
         auto get = il2cpp_property_get_get_method(prop);
         auto set = il2cpp_property_get_set_method(prop);
         auto prop_name = il2cpp_property_get_name(prop);
@@ -299,13 +289,15 @@ std::string dump_type(const Il2CppType *type) {
     auto parent = il2cpp_class_get_parent(klass);
     if (!is_valuetype && !is_enum && parent) {
         auto parent_type = il2cpp_class_get_type(parent);
-        if (parent_type->type != IL2CPP_TYPE_OBJECT) {
+        if (parent_type && parent_type->type != IL2CPP_TYPE_OBJECT) {
             extends.emplace_back(il2cpp_class_get_name(parent));
         }
     }
     void *iter = nullptr;
     while (auto itf = il2cpp_class_get_interfaces(klass, &iter)) {
-        extends.emplace_back(il2cpp_class_get_name(itf));
+        if (itf) {
+            extends.emplace_back(il2cpp_class_get_name(itf));
+        }
     }
     if (!extends.empty()) {
         outPut << " : " << extends[0];
@@ -342,27 +334,50 @@ void il2cpp_api_init(void *handle) {
     auto domain = il2cpp_domain_get();
     il2cpp_thread_attach(domain);
 
-    // Добавляем вывод CodeRegistration и MetadataRegistration
+    // Log CodeRegistration and MetadataRegistration
     if (il2cpp_get_code_registration && il2cpp_get_metadata_registration) {
         auto codeReg = il2cpp_get_code_registration();
         auto metaReg = il2cpp_get_metadata_registration();
-        LOGI("CodeRegistration: %p", codeReg);
-        LOGI("MetadataRegistration: %p", metaReg);
-
-        // Дополнительно можно вывести ключевые поля
-        LOGI("CodeRegistration.methodPointersCount: %d", codeReg->methodPointersCount);
-        LOGI("MetadataRegistration.typeDefinitionsCount: %d", metaReg->typeDefinitionsCount);
+        
+        if (codeReg) {
+            LOGI("CodeRegistration: %p", codeReg);
+            LOGI("CodeRegistration.methodPointersCount: %d", codeReg->methodPointersCount);
+        }
+        
+        if (metaReg) {
+            LOGI("MetadataRegistration: %p", metaReg);
+            LOGI("MetadataRegistration.typeDefinitionsCount: %d", metaReg->typeDefinitionsCount);
+        }
     }
 }
 
 void il2cpp_dump(const char *outDir) {
+    if (!outDir) {
+        LOGE("Output directory path is null");
+        return;
+    }
+    
     LOGI("dumping...");
     size_t size;
     auto domain = il2cpp_domain_get();
+    if (!domain) {
+        LOGE("Failed to get domain");
+        return;
+    }
+    
     auto assemblies = il2cpp_domain_get_assemblies(domain, &size);
+    if (!assemblies || size == 0) {
+        LOGW("No assemblies found or failed to get assemblies");
+        return;
+    }
+    
     std::stringstream imageOutput;
     for (int i = 0; i < size; ++i) {
         auto image = il2cpp_assembly_get_image(assemblies[i]);
+        if (!image) {
+            LOGW("Failed to get image for assembly %d", i);
+            continue;
+        }
         imageOutput << "// Image " << i << ": " << il2cpp_image_get_name(image) << "\n";
     }
     std::vector<std::string> outPuts;
@@ -418,8 +433,15 @@ void il2cpp_dump(const char *outDir) {
                                                                                         nullptr);
             auto reflectionTypes = ((Assembly_GetTypes_ftn) assemblyGetTypes->methodPointer)(
                     reflectionAssembly, nullptr);
+            if (!reflectionTypes) {
+                LOGW("Failed to get types for assembly %s", image_name);
+                continue;
+            }
             auto items = reflectionTypes->vector;
             for (int j = 0; j < reflectionTypes->max_length; ++j) {
+                if (!items || !items[j]) {
+                    continue;
+                }
                 auto klass = il2cpp_class_from_system_type((Il2CppReflectionType *) items[j]);
                 auto type = il2cpp_class_get_type(klass);
                 //LOGD("type name : %s", il2cpp_type_get_name(type));
