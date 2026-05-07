@@ -2,8 +2,8 @@
 #define DO_API_NO_RETURN(r, n, p) DO_API(r,n,p)
 #endif
 
-DO_API(const Il2CppCodeRegistration*, il2cpp_get_code_registration, ())
-DO_API(const Il2CppMetadataRegistration*, il2cpp_get_metadata_registration, ())
+DO_API(Il2CppCodeRegistration*, il2cpp_get_code_registration, ())
+DO_API(Il2CppMetadataRegistration*, il2cpp_get_metadata_registration, ())
 DO_API(int, il2cpp_init, (const char* domain_name));
 DO_API(int, il2cpp_init_utf16, (const Il2CppChar * domain_name));
 DO_API(void, il2cpp_shutdown, ());
