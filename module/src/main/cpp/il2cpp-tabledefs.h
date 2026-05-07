@@ -150,3 +150,19 @@
 #define ASSEMBLYREF_RETARGETABLE_FLAG         0x00000100
 #define ASSEMBLYREF_ENABLEJITCOMPILE_TRACKING_FLAG 0x00008000
 #define ASSEMBLYREF_DISABLEJITCOMPILE_OPTIMIZER_FLAG 0x00004000
+
+// ---------------------------
+// Il2Cpp internal structures
+// ---------------------------
+
+struct Il2CppCodeRegistration {
+    int methodPointersCount;
+    const void** methodPointers;
+    // можно добавить остальные поля при необходимости
+};
+
+struct Il2CppMetadataRegistration {
+    int typeDefinitionsCount;
+    const void* typeDefinitions;
+    // можно добавить остальные поля при необходимости
+};
