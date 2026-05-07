@@ -156,13 +156,31 @@
 // ---------------------------
 
 struct Il2CppCodeRegistration {
-    int methodPointersCount;
     const void** methodPointers;
-    // можно добавить остальные поля при необходимости
+    int methodPointersCount;
+    const void** invokerPointers;
+    int invokerPointersCount;
+    const char** customAttributeGenerator;
+    const void** methodInvokers;
+    int methodInvokersCount;
 };
 
 struct Il2CppMetadataRegistration {
-    int typeDefinitionsCount;
     const void* typeDefinitions;
-    // можно добавить остальные поля при необходимости
+    int typeDefinitionsCount;
+    const void* methodDefinitions;
+    const void* parameterDefinitions;
+    const void* fieldDefinitions;
+    const void* propertyDefinitions;
+    const void* methodReferences;
+    int methodReferencesCount;
+    const void* attributeTypes;
+    int attributeTypesCount;
+    const void* unresolvedVirtualCallParameterTypes;
+    int unresolvedVirtualCallParameterTypesCount;
+    const void* unresolvedVirtualCallParameterRanges;
+    const void* windowsRuntimeTypeNames;
+    int windowsRuntimeTypeNamesCount;
+    const void* windowsRuntimeStrings;
+    int windowsRuntimeStringsCount;
 };
