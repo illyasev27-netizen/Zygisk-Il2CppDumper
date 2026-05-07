@@ -2,6 +2,8 @@
 #define DO_API_NO_RETURN(r, n, p) DO_API(r,n,p)
 #endif
 
+DO_API(const char*, il2cpp_method_get_name, (const MethodInfo* method))
+DO_API(const char*, il2cpp_class_get_name, (Il2CppClass* klass))
 DO_API(int, il2cpp_init, (const char* domain_name));
 DO_API(int, il2cpp_init_utf16, (const Il2CppChar * domain_name));
 DO_API(void, il2cpp_shutdown, ());
