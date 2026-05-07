@@ -152,9 +152,11 @@ std::string dump_property(Il2CppClass *klass) {
     void *iter = nullptr;
     while (auto prop = il2cpp_class_get_properties(klass, &iter)) {
         //TODO attribute
-        auto get = il2cpp_property_get_get_method(prop);
-        auto set = il2cpp_property_get_set_method(prop);
-        auto prop_name = il2cpp_property_get_name(prop);
+        // il2cpp_class_get_properties returns const PropertyInfo*, but API functions expect PropertyInfo*
+        auto prop_mutable = const_cast<PropertyInfo *>(prop);
+        auto get = il2cpp_property_get_get_method(prop_mutable);
+        auto set = il2cpp_property_get_set_method(prop_mutable);
+        auto prop_name = il2cpp_property_get_name(prop_mutable);
         outPut << "\t";
         Il2CppClass *prop_class = nullptr;
         uint32_t iflags = 0;
