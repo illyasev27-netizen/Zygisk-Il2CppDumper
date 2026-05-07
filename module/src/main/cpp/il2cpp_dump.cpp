@@ -341,6 +341,18 @@ void il2cpp_api_init(void *handle) {
     }
     auto domain = il2cpp_domain_get();
     il2cpp_thread_attach(domain);
+
+    // Добавляем вывод CodeRegistration и MetadataRegistration
+    if (il2cpp_get_code_registration && il2cpp_get_metadata_registration) {
+        auto codeReg = il2cpp_get_code_registration();
+        auto metaReg = il2cpp_get_metadata_registration();
+        LOGI("CodeRegistration: %p", codeReg);
+        LOGI("MetadataRegistration: %p", metaReg);
+
+        // Дополнительно можно вывести ключевые поля
+        LOGI("CodeRegistration.methodPointersCount: %d", codeReg->methodPointersCount);
+        LOGI("MetadataRegistration.typeDefinitionsCount: %d", metaReg->typeDefinitionsCount);
+    }
 }
 
 void il2cpp_dump(const char *outDir) {
